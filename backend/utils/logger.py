@@ -64,6 +64,31 @@ def setup_logger(
 logger = setup_logger()
 
 
+def _mask_value(key: str, value: str, redact_keys=None) -> str:
+    """Mask sensitive values for logging."""
+    try:
+        lk = key.lower()
+        if redact_keys and lk in redact_keys:
+            return "[REDACTED]"
+        # mask long values
+        s = str(value)
+        if len(s) > 100:
+            return s[:50] + "...[TRUNCATED]"
+        return s
+    except Exception:
+        return "[REDACTED]"
+
+
+def safe_log_dict(logger: logging.Logger, data: dict, redact_keys=None, level=logging.INFO):
+    """Log a dict while redacting common sensitive keys and truncating large values."""
+    try:
+        redact = set([k.lower() for k in (redact_keys or [])])
+        safe_items = {k: _mask_value(k, v, redact) for k, v in data.items()}
+        logger.log(level, "%s", safe_items)
+    except Exception:
+        logger.exception("Failed to safe-log dict")
+
+
 class RequestTimer:
     """Context manager for timing API requests."""
     

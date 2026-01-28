@@ -48,8 +48,10 @@ License:
     MIT
 """
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import APIKeyHeader
+import os
 import io
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -66,14 +68,44 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS middleware for frontend
+# Load runtime config (CORS, API key, upload limits, bind host)
+from .config import CORS_ORIGINS, API_KEY, ALLOW_ANONYMOUS, MAX_UPLOAD_SIZE, BIND_HOST, BIND_PORT, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW, REDACT_KEYS
+from .utils.validation import validate_file_extension
+from .utils.logger import safe_log_dict, logger
+from .ratelimit import RateLimitMiddleware
+
+
+# CORS middleware for frontend (read from env via backend.config)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate-limit middleware (in-memory). For multi-worker deployments use Redis-backed limiter.
+app.add_middleware(RateLimitMiddleware, max_requests=RATE_LIMIT_REQUESTS, window_seconds=RATE_LIMIT_WINDOW)
+
+# Simple API key header scheme. For production use a full OAuth2/JWT flow.
+api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_api_key(api_key: str = Depends(api_key_scheme)) -> bool:
+    """Dependency to protect sensitive endpoints with a single API key.
+
+    Behavior:
+      - If `ALLOW_ANONYMOUS` is true, skip checks (development convenience).
+      - If `API_KEY` is not configured and anonymous is false, return 500.
+      - Otherwise require header `X-API-Key` to match.
+    """
+    if ALLOW_ANONYMOUS:
+        return True
+    if not API_KEY:
+        raise HTTPException(status_code=500, detail="API key not configured on server")
+    if not api_key or api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return True
 
 # ============================================================================
 # DATA MODELS
@@ -762,7 +794,7 @@ async def health_check():
 
 
 @app.post("/api/upload")
-async def upload_data(file: UploadFile = File(...)):
+async def upload_data(file: UploadFile = File(...), _auth: bool = Depends(verify_api_key)):
     """
     Upload a CSV file with scenario returns.
     Expected format: First column = scenario index, other columns = asset returns.
@@ -771,11 +803,23 @@ async def upload_data(file: UploadFile = File(...)):
     
     try:
         contents = await file.read()
-        
-        # Try to read as CSV
-        if file.filename.endswith('.csv'):
+        # Avoid logging file contents; only log metadata safely
+        safe_log_dict(logger, {"filename": file.filename, "size": len(contents)}, redact_keys=REDACT_KEYS)
+
+        # Enforce upload size limits
+        if len(contents) > MAX_UPLOAD_SIZE:
+            raise HTTPException(status_code=413, detail=f"File too large. Max size = {MAX_UPLOAD_SIZE} bytes")
+
+        # Validate extension using shared helper
+        ok, info = validate_file_extension(file.filename)
+        if not ok:
+            raise HTTPException(status_code=400, detail=info)
+
+        # Try to read as CSV/Excel
+        if file.filename.lower().endswith('.csv'):
+            # Respect content type when possible
             df = pd.read_csv(io.BytesIO(contents), index_col=0)
-        elif file.filename.endswith(('.xlsx', '.xls')):
+        elif file.filename.lower().endswith(('.xlsx', '.xls')):
             df = pd.read_excel(io.BytesIO(contents), index_col=0)
         else:
             raise HTTPException(status_code=400, detail="Unsupported file format. Use CSV or Excel.")
@@ -784,6 +828,16 @@ async def upload_data(file: UploadFile = File(...)):
         if df.empty:
             raise HTTPException(status_code=400, detail="File is empty")
         
+        # Convert to numeric where possible, but first check for potential CSV/Excel
+        # formula injection: any string cell starting with =, +, -, @ should be rejected
+        object_cols = df.select_dtypes(include=['object']).columns.tolist()
+        if object_cols:
+            for col in object_cols:
+                # Vectorized check for leading dangerous characters
+                series = df[col].astype(str).fillna("")
+                if series.str.match(r'^[=+\-@]').any():
+                    raise HTTPException(status_code=400, detail="File contains potentially dangerous formula cells. Remove leading =, +, - or @ from values.")
+
         # Convert to numeric, coerce errors
         df = df.apply(pd.to_numeric, errors='coerce')
         
@@ -796,6 +850,7 @@ async def upload_data(file: UploadFile = File(...)):
         if df.shape[0] < 100:
             raise HTTPException(status_code=400, detail="Need at least 100 scenarios")
         
+        # Replace in-memory dataset only after validation succeeds
         returns_df = df
         optimizer = CatBondOptimizer(returns_df, risk_free_rate=0.0)
         
@@ -812,14 +867,16 @@ async def upload_data(file: UploadFile = File(...)):
 
 
 @app.post("/api/reset")
-async def reset_data():
+async def reset_data(_auth: bool = Depends(verify_api_key)):
     """Reset to default sample data."""
     global returns_df, optimizer
     try:
         load_data()
+        logger.info("Data reset to sample data via API reset endpoint")
         return {"status": "success", "message": "Reset to sample data"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Failed to reset data")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/assets", response_model=List[AssetInfo])
@@ -860,7 +917,7 @@ async def get_assets():
 
 
 @app.post("/api/optimize", response_model=OptimizationResponse)
-async def optimize_portfolio(request: OptimizationRequest):
+async def optimize_portfolio(request: OptimizationRequest, _auth: bool = Depends(verify_api_key)):
     global optimizer
     
     if returns_df is None:
@@ -976,4 +1033,5 @@ async def get_scenarios(sample_size: int = 1000):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Bind to a safe default host/port unless overridden in environment
+    uvicorn.run(app, host=BIND_HOST, port=BIND_PORT)
