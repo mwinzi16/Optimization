@@ -1,0 +1,5 @@
+# Streamlit standalone app dependencies
+-r requirements.txt
+
+streamlit>=1.40.0,<2.0.0
+plotly>=5.24.0,<6.0.0

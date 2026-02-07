@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border-base;
+  }
+  body {
+    @apply bg-bg-primary text-text-primary font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-bg-card border border-border-base rounded-xl;
+  }
+  .input-field {
+    @apply w-full px-3 py-2 bg-bg-elevated border border-border-base rounded-lg text-text-primary text-sm
+           focus:outline-none focus:ring-2 focus:ring-accent-teal/50 focus:border-accent-teal
+           transition-all duration-200;
+  }
+  .btn-primary {
+    @apply w-full py-3 px-4 rounded-lg font-semibold text-sm
+           bg-gradient-to-r from-accent-green to-accent-teal text-white
+           hover:shadow-lg hover:shadow-accent-green/25 active:scale-[0.98]
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none
+           transition-all duration-200;
+  }
+  .btn-secondary {
+    @apply w-full py-2.5 px-4 rounded-lg font-medium text-sm
+           bg-bg-elevated text-text-secondary border border-border-base
+           hover:text-text-primary hover:border-border-light
+           transition-all duration-200;
+  }
+  .label-text {
+    @apply text-xs font-medium text-text-secondary uppercase tracking-wider;
+  }
+  .metric-value {
+    @apply text-2xl font-bold tracking-tight;
+  }
+  .metric-label {
+    @apply text-xs text-white/70 font-medium;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+}
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out forwards;
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Upload drop zone */
+.drop-zone {
+  @apply border-2 border-dashed border-border-light rounded-xl p-6
+         flex flex-col items-center justify-center gap-2
+         cursor-pointer transition-all duration-200
+         hover:border-accent-teal hover:bg-accent-teal/5;
+}
+.drop-zone.active {
+  @apply border-accent-teal bg-accent-teal/10;
+}

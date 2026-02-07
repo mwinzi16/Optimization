@@ -1,244 +1,219 @@
-# Portfolio Optimizer
+# Cat Bond Portfolio Optimizer
 
-An enterprise-grade portfolio optimization application featuring scenario-based optimization with multiple strategies, interactive visualizations, and comprehensive risk analytics.
+An enterprise-grade **catastrophe bond portfolio optimization** platform with a FastAPI backend, React frontend, and standalone Streamlit app. Supports six optimization strategies, scenario-based risk analysis, efficient frontier computation, drag-and-drop file upload, and interactive visualizations.
 
-![Portfolio Optimizer](docs/screenshot.png)
+## Features
 
-## � Documentation
+- **6 Optimization Methods** — Max Sharpe, Min Variance, Min CVaR, Mean-CVaR Trade-off, Max Return (constrained), Exponential Utility (CARA)
+- **Scenario-Based Analysis** — VaR/CVaR at multiple confidence levels, return-period analysis, loss probability
+- **Efficient Frontier** — Full frontier computation with configurable resolution
+- **File Upload** — CSV / Excel drag-and-drop with automatic validation
+- **Interactive UI** — Recharts visualizations, dark theme, glassmorphism, keyboard shortcuts, ARIA accessibility
+- **Export** — CSV, JSON, portfolio weights, shareable URLs
 
-| Document | Description |
-|----------|-------------|
-| [Architecture](docs/ARCHITECTURE.md) | System design, data flow, and component hierarchy |
-| [API Reference](docs/API.md) | Complete REST API documentation |
-| [Deployment Guide](docs/DEPLOYMENT.md) | Docker, cloud, and production deployment |
-| [Contributing](docs/CONTRIBUTING.md) | Development workflow and code standards |
-| [Glossary](docs/GLOSSARY.md) | Financial terms and definitions |
-| [Changelog](CHANGELOG.md) | Version history and release notes |
+## Architecture
 
-## �🚀 Features
+| Layer | Technology | Port |
+|-------|-----------|------|
+| **Backend API** | FastAPI + CVXPY + NumPy/Pandas/SciPy | 8000 |
+| **Frontend** | React 18 + TypeScript + Vite + Tailwind CSS + Recharts | 3000 |
+| **Streamlit App** | Streamlit + Plotly (standalone alternative UI) | 8501 |
 
-### Optimization Methods
-- **Maximum Sharpe Ratio** - Optimal risk-adjusted returns
-- **Minimum Variance** - Lowest volatility portfolio
-- **Minimum CVaR** - Tail risk optimization
-- **Mean-CVaR Trade-off** - Balancing return vs. tail risk
-- **Maximum Return (Constrained)** - Return maximization with risk limits
-- **Exponential Utility (CARA)** - Constant absolute risk aversion optimization
+## Quick Start
 
-### Risk Analytics
-- VaR/CVaR at multiple confidence levels (90%, 95%, 98%, 99%)
-- Return period analysis with visualization
-- Loss probability analysis
-- Efficient frontier visualization
-- Risk gauges and indicators
-
-### Enterprise Features
-- 📊 **Interactive Charts** - Recharts-powered visualizations
-- 📁 **File Upload** - CSV/Excel support with drag-and-drop
-- 💾 **Export Options** - CSV, JSON, and shareable URLs
-- ⌨️ **Keyboard Shortcuts** - Ctrl+R to run optimization
-- ♿ **Accessibility** - ARIA labels, keyboard navigation, screen reader support
-- 📱 **Responsive Design** - Mobile and tablet optimized
-- 🔔 **Toast Notifications** - Success/error feedback
-- 🎨 **Professional UI** - Dark theme with glassmorphism effects
-
-## 🛠️ Tech Stack
-
-### Frontend
-- **React 18** with TypeScript
-- **Vite** for fast development
-- **Tailwind CSS** for styling
-- **Recharts** for data visualization
-- **Lucide React** for icons
-
-### Backend
-- **FastAPI** with Python 3.13
-- **CVXPY** with CLARABEL solver
-- **NumPy/Pandas** for data processing
-- **SciPy** for optimization
-
-## 📦 Installation
-
-### Prerequisites
-- Node.js 18+ and npm
-- Python 3.10+
-- Git
-
-### Backend Setup
+### Docker Compose (recommended)
 
 ```bash
-# Navigate to project root
+docker compose up --build
+```
+
+This starts all three services:
+
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:8000/api/v1/health |
+| Streamlit | http://localhost:8501 |
+
+### Manual Setup
+
+#### Backend
+
+```bash
 cd Optimization
-
-# Create virtual environment
 python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # Linux/macOS
+pip install -r requirements.txt
 
-# Activate virtual environment (Windows)
-.venv\Scripts\activate
-
-# Install dependencies
-pip install fastapi uvicorn pandas numpy scipy cvxpy python-multipart openpyxl clarabel
-```
-
-### Frontend Setup
-
-```bash
-# Navigate to frontend directory
-cd frontend
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
-```
-
-### Running the Application
-
-1. **Start the backend:**
-```bash
 cd backend
 uvicorn api:app --reload --port 8000
 ```
 
-2. **Start the frontend:**
+#### Frontend
+
 ```bash
 cd frontend
+npm install
 npm run dev
 ```
 
-3. **Open in browser:** http://localhost:3000
+Open http://localhost:3000.
 
-## 📁 Project Structure
+#### Streamlit (standalone)
+
+```bash
+pip install -r requirements-streamlit.txt
+streamlit run app.py
+```
+
+Open http://localhost:8501.
+
+## Project Structure
 
 ```
 Optimization/
 ├── backend/
-│   ├── api.py              # FastAPI application
+│   ├── api.py                  # FastAPI application
 │   └── utils/
-│       ├── __init__.py     # Utils package
-│       ├── cache.py        # LRU caching
-│       ├── exceptions.py   # Custom exceptions
-│       ├── logger.py       # Logging configuration
-│       └── validation.py   # Input validation
+│       ├── cache.py            # LRU caching with TTL
+│       ├── exceptions.py       # Custom exception hierarchy
+│       ├── logger.py           # Structured logging + correlation IDs
+│       └── validation.py       # Pydantic input validation
 ├── frontend/
 │   ├── src/
-│   │   ├── components/     # React components
-│   │   │   ├── AllocationTab.tsx
-│   │   │   ├── DistributionTab.tsx
-│   │   │   ├── ErrorBoundary.tsx
-│   │   │   ├── MetricCard.tsx
-│   │   │   ├── RiskAnalysisTab.tsx
-│   │   │   ├── Sidebar.tsx
-│   │   │   ├── Skeleton.tsx
-│   │   │   ├── StatsTab.tsx
-│   │   │   ├── Toast.tsx
-│   │   │   └── Tooltip.tsx
-│   │   ├── hooks/          # Custom React hooks
-│   │   ├── utils/          # Utility functions
-│   │   ├── api.ts          # API client
-│   │   ├── types.ts        # TypeScript types
-│   │   ├── App.tsx         # Main application
-│   │   └── index.css       # Global styles
-│   ├── package.json
-│   └── vite.config.ts
+│   │   ├── components/         # React components
+│   │   ├── hooks/              # Custom React hooks
+│   │   ├── utils/              # Helpers (format, export, constants)
+│   │   ├── App.tsx             # Main application
+│   │   └── api.ts              # API client
+│   ├── Dockerfile              # Multi-stage Node + nginx
+│   ├── nginx.conf              # SPA routing + API proxy
+│   └── package.json
 ├── data/
-│   └── scenario_returns.csv  # Sample data
+│   ├── scenario_returns.csv    # Sample scenario data
+│   └── asset_info.csv          # Asset metadata
+├── app.py                      # Standalone Streamlit app
+├── Dockerfile                  # Backend (multi-stage)
+├── Dockerfile.streamlit        # Streamlit container
+├── docker-compose.yml          # Full-stack orchestration
+├── requirements.txt            # Runtime dependencies
+├── requirements-dev.txt        # Dev/test dependencies
+├── requirements-streamlit.txt  # Streamlit dependencies
+├── CHANGELOG.md
 └── README.md
 ```
 
-## 🎯 Usage
+## API Endpoints
 
-### Uploading Custom Data
+All endpoints are served under the `/api/v1/` prefix.
 
-1. Prepare a CSV or Excel file with:
-   - Rows representing scenarios (10,000+ recommended)
-   - Columns representing assets
-   - Values as decimal returns (e.g., 0.05 for 5%)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/health` | GET | Health check |
+| `/api/v1/assets` | GET | List available assets with metadata |
+| `/api/v1/scenarios` | GET | Scenario data summary |
+| `/api/v1/optimize` | POST | Run portfolio optimization |
+| `/api/v1/efficient-frontier` | GET | Compute efficient frontier |
+| `/api/v1/upload` | POST | Upload CSV/Excel data file |
+| `/api/v1/reset` | POST | Reset to sample data |
 
-2. Drag and drop the file onto the upload zone, or click to browse
+## Optimization Methods
 
-3. The optimizer will automatically recalculate with your data
+| Method | Key | Description |
+|--------|-----|-------------|
+| Maximum Sharpe Ratio | `max_sharpe` | Maximizes risk-adjusted return (return − RF) / volatility |
+| Minimum Variance | `min_variance` | Minimizes portfolio volatility |
+| Minimum CVaR | `min_cvar` | Minimizes conditional value-at-risk (tail risk) |
+| Mean-CVaR Trade-off | `mean_cvar` | Balances expected return against CVaR via λ parameter |
+| Maximum Return | `max_return` | Maximizes return subject to a CVaR constraint |
+| Exponential Utility (CARA) | `exponential_utility` | Maximizes expected exponential utility with risk-aversion γ |
 
-### Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl + R` | Run optimization |
-| `Escape` | Close mobile sidebar |
-
-### Exporting Results
-
-- **CSV** - Full report with metrics, statistics, and weights
-- **JSON** - Programmatic export for integration
-- **Weights CSV** - Portfolio weights only
-- **Share Link** - URL with encoded parameters
-
-## 🔧 Configuration
+## Configuration
 
 ### Optimization Parameters
 
 | Parameter | Description | Range |
 |-----------|-------------|-------|
-| Min Weight | Minimum allocation per asset | 0-100% |
-| Max Weight | Maximum allocation per asset | 0-100% |
-| Risk-Free Rate | Base rate for Sharpe calculation | 0-20% |
-| CVaR Alpha | Confidence level for CVaR | 90-99% |
-| Risk Aversion | Trade-off parameter | 0.01-10 |
+| Min Weight | Minimum allocation per asset | 0–100 % |
+| Max Weight | Maximum allocation per asset | 0–100 % |
+| Risk-Free Rate | Base rate for Sharpe calculation | 0–20 % |
+| CVaR Alpha | Confidence level for CVaR | 90–99 % |
+| Risk Aversion (γ) | Trade-off / utility parameter | 0.01–10 |
 
 ### Environment Variables
 
-```bash
-# Backend
-API_PORT=8000
-LOG_LEVEL=INFO
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_PORT` | `8000` | Backend listen port |
+| `LOG_LEVEL` | `INFO` | Logging verbosity (DEBUG, INFO, WARNING, ERROR) |
+| `VITE_API_BASE` | `http://localhost:8000` | Frontend API base URL (`.env`) |
 
-# Frontend (in .env)
-VITE_API_BASE=http://localhost:8000
+## Testing
+
+### Backend
+
+```bash
+pip install -r requirements-dev.txt
+
+# Unit + integration tests
+pytest --cov=backend --cov-report=term-missing
+
+# Linting & formatting
+ruff check backend/
+black --check backend/
+
+# Security scan
+bandit -r backend/
 ```
 
-## 📊 API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/health` | GET | Health check |
-| `/api/assets` | GET | Get asset information |
-| `/api/optimize` | POST | Run optimization |
-| `/api/efficient-frontier` | GET | Get efficient frontier |
-| `/api/upload` | POST | Upload data file |
-| `/api/reset` | POST | Reset to sample data |
-
-## 🧪 Testing
+### Frontend
 
 ```bash
-# Run tests
-npm run test
-
-# Run with coverage
-npm run test:coverage
-
-# Type checking
-npm run type-check
-
-# Linting
+cd frontend
 npm run lint
-npm run lint:fix
+npm run format
 ```
 
-## 🤝 Contributing
+## Deployment
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+### Docker
 
-## 📄 License
+```bash
+# Build and run all services
+docker compose up --build -d
+
+# Build individual images
+docker build -t portfolio-backend .
+docker build -t portfolio-frontend frontend/
+docker build -f Dockerfile.streamlit -t portfolio-streamlit .
+```
+
+### Production Notes
+
+- Backend runs with 2 Uvicorn workers by default
+- Frontend is served via nginx with SPA fallback routing
+- API requests from the frontend are proxied through nginx at `/api/v1/`
+- All containers run as non-root users
+- Health checks are configured for backend and Streamlit containers
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | System design and data flow |
+| [API Reference](docs/API.md) | Complete REST API docs |
+| [Deployment Guide](docs/DEPLOYMENT.md) | Docker and cloud deployment |
+| [Contributing](docs/CONTRIBUTING.md) | Development workflow |
+| [Glossary](docs/GLOSSARY.md) | Financial terms |
+| [Changelog](CHANGELOG.md) | Version history |
+
+## License
 
 This project is proprietary software.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
-- CVXPY team for the optimization framework
-- Recharts for beautiful visualizations
-- Tailwind CSS for utility-first styling
+- [CVXPY](https://www.cvxpy.org/) for convex optimization
+- [Recharts](https://recharts.org/) for React chart components
+- [Tailwind CSS](https://tailwindcss.com/) for utility-first styling

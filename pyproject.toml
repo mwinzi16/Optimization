@@ -1,0 +1,25 @@
+[project]
+name = "portfolio-optimizer"
+version = "2.0.0"
+requires-python = ">=3.12"
+description = "Advanced portfolio optimization with multiple strategies"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.black]
+line-length = 88
+
+[tool.mypy]
+python_version = "3.12"
+strict = true

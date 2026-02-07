@@ -48,11 +48,19 @@ License:
     MIT
 """
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+
+from fastapi import APIRouter, FastAPI, HTTPException, Query, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
-import os
+from starlette.responses import JSONResponse
+import hmac
 import io
+import os
+import threading
+import uuid
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import numpy as np
@@ -62,15 +70,31 @@ import cvxpy as cp
 from scipy.optimize import minimize
 from dataclasses import dataclass
 
+# Lifespan context manager (replaces deprecated @app.on_event)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    load_data()
+    yield
+
+tags_metadata = [
+    {"name": "Health", "description": "Health check and status"},
+    {"name": "Data", "description": "Data upload and management"},
+    {"name": "Portfolio", "description": "Portfolio optimization and analysis"},
+]
+
 app = FastAPI(
     title="Portfolio Optimizer API",
     description="Advanced portfolio optimization with multiple strategies",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan,
+    openapi_tags=tags_metadata,
 )
 
 # Load runtime config (CORS, API key, upload limits, bind host)
 from .config import CORS_ORIGINS, API_KEY, ALLOW_ANONYMOUS, MAX_UPLOAD_SIZE, BIND_HOST, BIND_PORT, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW, REDACT_KEYS
-from .utils.validation import validate_file_extension
+from .utils.validation import ValidatedOptimizationRequest, validate_file_extension, sanitize_column_names
+from .utils.exceptions import OptimizerError, DataError, ValidationError, OptimizationError, ErrorCode
+from .utils.cache import optimization_cache, frontier_cache, cached
 from .utils.logger import safe_log_dict, logger
 from .ratelimit import RateLimitMiddleware
 
@@ -79,13 +103,55 @@ from .ratelimit import RateLimitMiddleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials="*" not in CORS_ORIGINS,  # Disable credentials with wildcard
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Rate-limit middleware (in-memory). For multi-worker deployments use Redis-backed limiter.
 app.add_middleware(RateLimitMiddleware, max_requests=RATE_LIMIT_REQUESTS, window_seconds=RATE_LIMIT_WINDOW)
+
+
+def envelope(data=None, meta=None, errors=None):
+    """Wrap response in standard envelope."""
+    return {
+        "data": data,
+        "meta": meta or {},
+        "errors": errors or [],
+    }
+
+
+@app.exception_handler(OptimizerError)
+async def optimizer_error_handler(request, exc: OptimizerError):
+    """Central error handler for all optimizer exceptions."""
+    status_map = {
+        ErrorCode.DATA_NOT_LOADED: 500,
+        ErrorCode.INVALID_FILE_FORMAT: 400,
+        ErrorCode.OPTIMIZATION_FAILED: 422,
+        ErrorCode.INVALID_METHOD: 400,
+        ErrorCode.INVALID_WEIGHT_RANGE: 400,
+        ErrorCode.INTERNAL_ERROR: 500,
+    }
+    status_code = status_map.get(exc.code, exc.status_code)
+    return JSONResponse(
+        status_code=status_code,
+        content=envelope(
+            errors=[{
+                "code": exc.code.value if hasattr(exc.code, 'value') else str(exc.code),
+                "message": str(exc),
+                "details": exc.details,
+            }]
+        ),
+    )
+
+
+@app.middleware("http")
+async def add_request_id(request, call_next):
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
 
 # Simple API key header scheme. For production use a full OAuth2/JWT flow.
 api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -103,61 +169,13 @@ async def verify_api_key(api_key: str = Depends(api_key_scheme)) -> bool:
         return True
     if not API_KEY:
         raise HTTPException(status_code=500, detail="API key not configured on server")
-    if not api_key or api_key != API_KEY:
+    if not api_key or not hmac.compare_digest(api_key, API_KEY):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return True
 
 # ============================================================================
 # DATA MODELS
 # ============================================================================
-
-class OptimizationRequest(BaseModel):
-    """
-    Request model for portfolio optimization.
-    
-    This model validates and documents all parameters needed for optimization.
-    Different optimization methods use different subsets of these parameters.
-    
-    Attributes:
-        method: Optimization method to use. One of:
-            - "Maximum Sharpe Ratio"
-            - "Minimum Variance"  
-            - "Minimum CVaR"
-            - "Mean-CVaR Trade-off"
-            - "Maximum Return (Constrained)"
-            - "Exponential Utility (CARA)"
-        min_weight: Minimum allocation per asset (0.0-1.0)
-        max_weight: Maximum allocation per asset (0.0-1.0)
-        risk_free_rate: Annual risk-free rate for Sharpe calculation (0.02 = 2%)
-        cvar_alpha: Tail probability for CVaR (0.05 = 95% confidence)
-        risk_aversion: Trade-off for Mean-CVaR (higher = more risk averse)
-        exp_risk_aversion: CARA coefficient (0=seeking, 0.5=neutral, 1=averse)
-        max_volatility: Maximum portfolio volatility constraint
-        max_cvar: Maximum portfolio CVaR constraint
-        constraint_type: Type of constraint for max return ("volatility" or "cvar")
-        cvar_constraint_alpha: Alpha for CVaR constraint
-    
-    Example:
-        >>> request = OptimizationRequest(
-        ...     method="Maximum Sharpe Ratio",
-        ...     min_weight=0.01,
-        ...     max_weight=0.15,
-        ...     risk_free_rate=0.02
-        ... )
-    """
-    method: str = Field(..., description="Optimization method")
-    min_weight: float = Field(0.0, ge=0.0, le=1.0)
-    max_weight: float = Field(1.0, ge=0.0, le=1.0)
-    risk_free_rate: float = Field(0.0, ge=0.0, le=0.2)
-    # Method-specific parameters
-    cvar_alpha: float = Field(0.05, ge=0.01, le=0.2)
-    risk_aversion: float = Field(1.0, ge=0.01, le=5.0)
-    exp_risk_aversion: float = Field(0.5, ge=0.01, le=1.0)
-    max_volatility: Optional[float] = Field(None, ge=0.01, le=0.5)
-    max_cvar: Optional[float] = Field(None, ge=0.01, le=0.8)
-    constraint_type: str = Field("volatility", description="volatility or cvar")
-    cvar_constraint_alpha: float = Field(0.05, ge=0.01, le=0.2)
-
 
 class OptimizationResponse(BaseModel):
     """
@@ -176,7 +194,7 @@ class OptimizationResponse(BaseModel):
             - sharpe_ratio: Risk-adjusted return
             - var_*: Value at Risk at various confidence levels
             - cvar_*: Conditional VaR at various confidence levels
-            - max_drawdown: Maximum loss in any scenario
+            - worst_scenario: Worst scenario return
         portfolio_returns: Array of returns for each scenario
         distribution_stats: Detailed statistics including percentiles,
             skewness, kurtosis, and probability metrics
@@ -314,6 +332,11 @@ class CatBondOptimizer:
         self.cov_matrix = adjusted_returns.cov().values
         self.returns_matrix = adjusted_returns.values
         
+        # Ensure covariance matrix is positive semi-definite
+        eigenvalues = np.linalg.eigvalsh(self.cov_matrix)
+        if eigenvalues.min() < 1e-10:
+            self.cov_matrix += np.eye(self.n_assets) * 1e-8  # Tikhonov regularization
+        
         # Store asset max returns (coupons) for no-loss return calculation
         # No-loss return = weighted sum of individual asset max returns (full coupon scenario)
         self.asset_max_returns = adjusted_returns.max().values
@@ -332,7 +355,7 @@ class CatBondOptimizer:
                 - sharpe_ratio: Return / volatility ratio
                 - var_*: Value at Risk at 90/95/98/99% confidence
                 - cvar_*: Conditional VaR at 90/95/98/99% confidence
-                - max_drawdown: Worst scenario return
+                - worst_scenario: Worst scenario return
         """
         # Use ORIGINAL returns for all metrics to be consistent with distribution_stats
         port_returns = self.original_returns_matrix @ weights
@@ -351,7 +374,7 @@ class CatBondOptimizer:
         cvar_98 = float(port_returns[port_returns <= var_98].mean()) if (port_returns <= var_98).any() else var_98
         cvar_99 = float(port_returns[port_returns <= var_99].mean()) if (port_returns <= var_99).any() else var_99
         
-        max_drawdown = float(port_returns.min())
+        worst_scenario = float(port_returns.min())
         
         return {
             "expected_return": exp_return,
@@ -365,7 +388,7 @@ class CatBondOptimizer:
             "cvar_95": cvar_95,
             "cvar_98": cvar_98,
             "cvar_99": cvar_99,
-            "max_drawdown": max_drawdown,
+            "worst_scenario": worst_scenario,
         }
     
     def _compute_distribution_stats(self, weights: np.ndarray) -> dict:
@@ -446,8 +469,13 @@ class CatBondOptimizer:
         # Key constraint: expected excess return = 1 (this is the transformation trick)
         constraints = [
             self.mean_returns @ y == 1,  # Fixed excess return (transformation)
-            y >= 0  # Non-negative (will be normalized to weights)
+            y >= 0,  # Non-negative (will be normalized to weights)
         ]
+        # Enforce weight bounds in the transformed space
+        if min_weight > 0:
+            constraints.append(y >= min_weight * cp.sum(y))
+        if max_weight < 1:
+            constraints.append(y <= max_weight * cp.sum(y))
         
         problem = cp.Problem(cp.Minimize(portfolio_var), constraints)
         problem.solve(solver=cp.CLARABEL)
@@ -460,12 +488,6 @@ class CatBondOptimizer:
             # Normalize y to get actual portfolio weights
             y_vals = np.maximum(y.value, 0)  # Ensure non-negative
             weights = y_vals / np.sum(y_vals)
-            
-            # Apply min/max weight constraints via post-processing if needed
-            if min_weight > 0 or max_weight < 1:
-                weights = np.clip(weights, min_weight, max_weight)
-                weights = weights / np.sum(weights)  # Re-normalize
-            
             status = "optimal"
         
         return {"weights": weights, "status": status, "method": "max_sharpe"}
@@ -633,9 +655,9 @@ class CatBondOptimizer:
         if max_cvar is not None:
             z = cp.Variable()
             u = cp.Variable(self.n_scenarios)
-            port_returns = self.returns_matrix @ w
+            port_returns_orig = self.original_returns_matrix @ w  # Use original returns for CVaR
             cvar = z + (1 / (alpha * self.n_scenarios)) * cp.sum(u)
-            constraints.extend([u >= 0, u >= -port_returns - z, cvar <= max_cvar])
+            constraints.extend([u >= 0, u >= -port_returns_orig - z, cvar <= max_cvar])
         
         objective = -self.mean_returns @ w
         
@@ -696,26 +718,23 @@ class CatBondOptimizer:
             def negative_expected_value(weights):
                 # Portfolio returns
                 port_returns = self.returns_matrix @ weights
-                # V = -(e^(-C*50*r)) / C for each scenario
-                # Maximize E[V] = -(1/C) * E[e^(-C*50*r)]
-                # For C > 0 (risk-averse): minimize E[e^(-C*50*r)]
-                # For C < 0 (risk-seeking): maximize E[e^(-C*50*r)] = minimize -E[e^(-C*50*r)]
-                exp_terms = np.exp(-C * scale * port_returns)
+                exponents = np.clip(-C * scale * port_returns, -500, 500)  # Prevent overflow
+                exp_terms = np.exp(exponents)
                 if C > 0:
-                    return np.mean(exp_terms)  # Minimize this
+                    return float(np.mean(exp_terms))  # Minimize this
                 else:
-                    return -np.mean(exp_terms)  # Minimize negative = maximize
+                    return float(-np.mean(exp_terms))  # Minimize negative = maximize
             
             def gradient(weights):
                 port_returns = self.returns_matrix @ weights
-                exp_terms = np.exp(-C * scale * port_returns)
-                grad = np.zeros(self.n_assets)
-                for i in range(self.n_assets):
-                    if C > 0:
-                        grad[i] = np.mean(-C * scale * self.returns_matrix[:, i] * exp_terms)
-                    else:
-                        grad[i] = -np.mean(-C * scale * self.returns_matrix[:, i] * exp_terms)
-                return grad
+                exponents = np.clip(-C * scale * port_returns, -500, 500)
+                exp_terms = np.exp(exponents)
+                # Vectorized gradient
+                grad = np.mean(-C * scale * self.returns_matrix * exp_terms[:, np.newaxis], axis=0)
+                if C > 0:
+                    return grad
+                else:
+                    return -grad
             
             constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
             bounds = [(min_weight, max_weight) for _ in range(self.n_assets)]
@@ -743,9 +762,12 @@ class CatBondOptimizer:
         min_var_metrics = self._compute_portfolio_metrics(min_var_result["weights"])
         
         max_return = float(self.mean_returns.max())
-        min_return = min_var_metrics["expected_return"]
+        # Convert min_return to excess-return space to match max_return
+        min_return = min_var_metrics["expected_return"] - self.rf
         
-        target_returns = np.linspace(min_return, max_return * 0.95, n_points)
+        # Cap at 95% of range, handling negative max_return properly
+        upper_target = max_return - 0.05 * abs(max_return - min_return) if max_return != min_return else max_return
+        target_returns = np.linspace(min_return, upper_target, n_points)
         
         frontier_data = []
         for target in target_returns:
@@ -768,39 +790,80 @@ class CatBondOptimizer:
 
 # Load data on startup
 DATA_PATH = Path(__file__).parent.parent / "data" / "scenario_returns.csv"
-returns_df = None
-optimizer = None
 
-def load_data():
-    global returns_df, optimizer
+
+class _DataStore:
+    """Thread-safe container for shared optimizer state."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._returns_df: Optional[pd.DataFrame] = None
+        self._optimizer: Optional[CatBondOptimizer] = None
+
+    @property
+    def returns_df(self) -> Optional[pd.DataFrame]:
+        with self._lock:
+            return self._returns_df
+
+    @property
+    def optimizer(self) -> Optional[CatBondOptimizer]:
+        with self._lock:
+            return self._optimizer
+
+    def update(self, returns_df: pd.DataFrame, risk_free_rate: float = 0.0) -> None:
+        with self._lock:
+            self._returns_df = returns_df
+            self._optimizer = CatBondOptimizer(returns_df, risk_free_rate=risk_free_rate)
+        # Invalidate all caches when data changes
+        optimization_cache.clear()
+        frontier_cache.clear()
+
+    def get_optimizer(self, risk_free_rate: float) -> CatBondOptimizer:
+        """Get an optimizer with the specified risk-free rate.
+
+        Creates a new instance locally — does NOT mutate global state.
+        """
+        with self._lock:
+            if self._returns_df is None:
+                raise ValueError("Data not loaded")
+            return CatBondOptimizer(self._returns_df.copy(), risk_free_rate=risk_free_rate)
+
+
+data_store = _DataStore()
+
+
+def load_data() -> None:
     if DATA_PATH.exists():
-        returns_df = pd.read_csv(DATA_PATH, index_col=0)
-        optimizer = CatBondOptimizer(returns_df, risk_free_rate=0.0)
+        df = pd.read_csv(DATA_PATH, index_col=0)
+        data_store.update(df, risk_free_rate=0.0)
     else:
         raise FileNotFoundError(f"Data file not found: {DATA_PATH}")
-
-@app.on_event("startup")
-async def startup_event():
-    load_data()
 
 
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
 
-@app.get("/api/health")
+router = APIRouter(prefix="/api/v1")
+
+
+@router.get("/health", tags=["Health"])
 async def health_check():
-    return {"status": "healthy", "data_loaded": returns_df is not None}
+    df = data_store.returns_df
+    return envelope(data={
+        "status": "healthy" if df is not None else "degraded",
+        "version": "2.0.0",
+        "data_loaded": df is not None,
+        "data_shape": {"scenarios": df.shape[0], "assets": df.shape[1]} if df is not None else None,
+    })
 
 
-@app.post("/api/upload")
+@router.post("/upload", tags=["Data"])
 async def upload_data(file: UploadFile = File(...), _auth: bool = Depends(verify_api_key)):
     """
     Upload a CSV file with scenario returns.
     Expected format: First column = scenario index, other columns = asset returns.
     """
-    global returns_df, optimizer
-    
     try:
         contents = await file.read()
         # Avoid logging file contents; only log metadata safely
@@ -813,7 +876,20 @@ async def upload_data(file: UploadFile = File(...), _auth: bool = Depends(verify
         # Validate extension using shared helper
         ok, info = validate_file_extension(file.filename)
         if not ok:
-            raise HTTPException(status_code=400, detail=info)
+            raise DataError(info, code=ErrorCode.INVALID_FILE_FORMAT)
+
+        # Validate content type
+        allowed_content_types = {
+            "text/csv", "application/csv",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+            "application/octet-stream",  # Common fallback
+        }
+        if file.content_type and file.content_type not in allowed_content_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported content type: {file.content_type}",
+            )
 
         # Try to read as CSV/Excel
         if file.filename.lower().endswith('.csv'):
@@ -822,11 +898,14 @@ async def upload_data(file: UploadFile = File(...), _auth: bool = Depends(verify
         elif file.filename.lower().endswith(('.xlsx', '.xls')):
             df = pd.read_excel(io.BytesIO(contents), index_col=0)
         else:
-            raise HTTPException(status_code=400, detail="Unsupported file format. Use CSV or Excel.")
+            raise DataError("Unsupported file format. Use CSV or Excel.", code=ErrorCode.INVALID_FILE_FORMAT)
         
+        # Sanitize column names
+        df.columns = sanitize_column_names(df.columns.tolist())
+
         # Validate data
         if df.empty:
-            raise HTTPException(status_code=400, detail="File is empty")
+            raise DataError("File is empty", code=ErrorCode.FILE_EMPTY)
         
         # Convert to numeric where possible, but first check for potential CSV/Excel
         # formula injection: any string cell starting with =, +, -, @ should be rejected
@@ -836,7 +915,10 @@ async def upload_data(file: UploadFile = File(...), _auth: bool = Depends(verify
                 # Vectorized check for leading dangerous characters
                 series = df[col].astype(str).fillna("")
                 if series.str.match(r'^[=+\-@]').any():
-                    raise HTTPException(status_code=400, detail="File contains potentially dangerous formula cells. Remove leading =, +, - or @ from values.")
+                    raise DataError(
+                        "File contains potentially dangerous formula cells. Remove leading =, +, - or @ from values.",
+                        code=ErrorCode.INVALID_FILE_FORMAT,
+                    )
 
         # Convert to numeric, coerce errors
         df = df.apply(pd.to_numeric, errors='coerce')
@@ -845,44 +927,44 @@ async def upload_data(file: UploadFile = File(...), _auth: bool = Depends(verify
         df = df.dropna(axis=1, how='all').dropna(axis=0, how='all')
         
         if df.shape[1] < 2:
-            raise HTTPException(status_code=400, detail="Need at least 2 assets")
+            raise DataError("Need at least 2 assets", code=ErrorCode.INSUFFICIENT_ASSETS)
         
         if df.shape[0] < 100:
-            raise HTTPException(status_code=400, detail="Need at least 100 scenarios")
+            raise DataError("Need at least 100 scenarios", code=ErrorCode.INSUFFICIENT_SCENARIOS)
         
         # Replace in-memory dataset only after validation succeeds
-        returns_df = df
-        optimizer = CatBondOptimizer(returns_df, risk_free_rate=0.0)
+        data_store.update(df, risk_free_rate=0.0)
         
-        return {
+        return envelope(data={
             "status": "success",
             "n_assets": df.shape[1],
             "n_scenarios": df.shape[0],
-            "asset_names": list(df.columns)
-        }
-    except HTTPException:
+            "asset_names": list(df.columns),
+        })
+    except (HTTPException, OptimizerError):
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error processing file: {str(e)}")
+        logger.exception("File upload processing error")
+        raise DataError("Failed to process uploaded file", code=ErrorCode.INVALID_FILE_FORMAT)
 
 
-@app.post("/api/reset")
+@router.post("/reset", tags=["Data"])
 async def reset_data(_auth: bool = Depends(verify_api_key)):
     """Reset to default sample data."""
-    global returns_df, optimizer
     try:
         load_data()
         logger.info("Data reset to sample data via API reset endpoint")
-        return {"status": "success", "message": "Reset to sample data"}
+        return envelope(data={"status": "success", "message": "Reset to sample data"})
     except Exception as e:
         logger.exception("Failed to reset data")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise OptimizerError("Internal server error", code=ErrorCode.INTERNAL_ERROR)
 
 
-@app.get("/api/assets", response_model=List[AssetInfo])
+@router.get("/assets", tags=["Data"])
 async def get_assets():
+    returns_df = data_store.returns_df
     if returns_df is None:
-        raise HTTPException(status_code=500, detail="Data not loaded")
+        raise DataError("Data not loaded", code=ErrorCode.DATA_NOT_LOADED)
     
     assets = []
     for col in returns_df.columns:
@@ -913,61 +995,60 @@ async def get_assets():
             cvar_95=cvar_95
         ))
     
-    return assets
+    return envelope(data=[a.model_dump() for a in assets], meta={"count": len(assets)})
 
 
-@app.post("/api/optimize", response_model=OptimizationResponse)
-async def optimize_portfolio(request: OptimizationRequest, _auth: bool = Depends(verify_api_key)):
-    global optimizer
-    
+@router.post("/optimize", tags=["Portfolio"])
+async def optimize_portfolio(request: ValidatedOptimizationRequest, _auth: bool = Depends(verify_api_key)):
+    returns_df = data_store.returns_df
     if returns_df is None:
-        raise HTTPException(status_code=500, detail="Data not loaded")
+        raise DataError("Data not loaded", code=ErrorCode.DATA_NOT_LOADED)
     
-    # Update optimizer with new risk-free rate
-    optimizer = CatBondOptimizer(returns_df, risk_free_rate=request.risk_free_rate)
+    # Create a LOCAL optimizer — does NOT mutate global state
+    opt = data_store.get_optimizer(request.risk_free_rate)
     
     # Run optimization based on method
     method = request.method.lower().replace(" ", "_").replace("(", "").replace(")", "")
     
     if method == "maximum_sharpe_ratio" or method == "max_sharpe":
-        result = optimizer.optimize_max_sharpe(request.min_weight, request.max_weight)
+        result = opt.optimize_max_sharpe(request.min_weight, request.max_weight)
     elif method == "minimum_variance" or method == "min_variance":
-        result = optimizer.optimize_min_variance(request.min_weight, request.max_weight)
+        result = opt.optimize_min_variance(request.min_weight, request.max_weight)
     elif method == "minimum_cvar" or method == "min_cvar":
-        result = optimizer.optimize_min_cvar(request.cvar_alpha, request.min_weight, request.max_weight)
+        result = opt.optimize_min_cvar(request.cvar_alpha, request.min_weight, request.max_weight)
     elif method == "mean-cvar_trade-off" or method == "mean_cvar":
-        result = optimizer.optimize_mean_cvar(request.cvar_alpha, request.risk_aversion,
-                                               request.min_weight, request.max_weight)
+        result = opt.optimize_mean_cvar(request.cvar_alpha, request.risk_aversion,
+                                        request.min_weight, request.max_weight)
     elif method == "maximum_return_constrained" or method == "max_return":
         if request.constraint_type == "volatility":
-            result = optimizer.optimize_max_return(
+            result = opt.optimize_max_return(
                 max_volatility=request.max_volatility or 0.15,
                 min_weight=request.min_weight, max_weight=request.max_weight
             )
         else:
-            result = optimizer.optimize_max_return(
+            result = opt.optimize_max_return(
                 max_cvar=request.max_cvar or 0.25,
                 alpha=request.cvar_constraint_alpha,
                 min_weight=request.min_weight, max_weight=request.max_weight
             )
     elif method == "exponential_utility_cara" or method == "exponential_utility":
-        result = optimizer.optimize_exponential_utility(
+        result = opt.optimize_exponential_utility(
             request.exp_risk_aversion, request.min_weight, request.max_weight
         )
     else:
-        raise HTTPException(status_code=400, detail=f"Unknown optimization method: {request.method}")
+        raise ValidationError(f"Unknown optimization method: {request.method}", code=ErrorCode.INVALID_METHOD)
     
     weights = result["weights"]
-    metrics = optimizer._compute_portfolio_metrics(weights)
-    dist_stats = optimizer._compute_distribution_stats(weights)
+    metrics = opt._compute_portfolio_metrics(weights)
+    dist_stats = opt._compute_distribution_stats(weights)
     # Use ORIGINAL (unadjusted) returns for consistency with distribution_stats
-    original_portfolio_returns = optimizer.original_returns_matrix @ weights
+    original_portfolio_returns = opt.original_returns_matrix @ weights
     portfolio_returns = original_portfolio_returns.tolist()
     
     # Find the best scenario (highest portfolio return) and get each asset's return in that scenario
     best_scenario_idx = int(np.argmax(original_portfolio_returns))
-    best_scenario_asset_returns = optimizer.original_returns_matrix[best_scenario_idx, :]
-    best_scenario_returns = {asset: float(r) for asset, r in zip(returns_df.columns, best_scenario_asset_returns)}
+    best_scenario_asset_returns = opt.original_returns_matrix[best_scenario_idx, :]
+    best_scenario_returns = {asset: float(r) for asset, r in zip(opt.assets, best_scenario_asset_returns)}
     
     # Find VaR scenarios (sorted indices, find the scenario at each percentile)
     sorted_indices = np.argsort(original_portfolio_returns)
@@ -976,17 +1057,17 @@ async def optimize_portfolio(request: OptimizationRequest, _auth: bool = Depends
     var95_idx = sorted_indices[int(n_scenarios * 0.05)]  # 5th percentile
     var99_idx = sorted_indices[int(n_scenarios * 0.01)]  # 1st percentile
     
-    var90_scenario_returns = {asset: float(r) for asset, r in zip(returns_df.columns, optimizer.original_returns_matrix[var90_idx, :])}
-    var95_scenario_returns = {asset: float(r) for asset, r in zip(returns_df.columns, optimizer.original_returns_matrix[var95_idx, :])}
-    var99_scenario_returns = {asset: float(r) for asset, r in zip(returns_df.columns, optimizer.original_returns_matrix[var99_idx, :])}
+    var90_scenario_returns = {asset: float(r) for asset, r in zip(opt.assets, opt.original_returns_matrix[var90_idx, :])}
+    var95_scenario_returns = {asset: float(r) for asset, r in zip(opt.assets, opt.original_returns_matrix[var95_idx, :])}
+    var99_scenario_returns = {asset: float(r) for asset, r in zip(opt.assets, opt.original_returns_matrix[var99_idx, :])}
     
     # Mean returns for each asset (for expected loss calculation)
-    asset_mean_returns = {asset: float(r) for asset, r in zip(returns_df.columns, optimizer.original_returns_matrix.mean(axis=0))}
+    asset_mean_returns = {asset: float(r) for asset, r in zip(opt.assets, opt.original_returns_matrix.mean(axis=0))}
     
-    return OptimizationResponse(
+    response_dict = OptimizationResponse(
         status=result["status"],
         method=result["method"],
-        weights={asset: float(w) for asset, w in zip(returns_df.columns, weights)},
+        weights={asset: float(w) for asset, w in zip(opt.assets, weights)},
         metrics=metrics,
         portfolio_returns=portfolio_returns,
         distribution_stats=dist_stats,
@@ -994,41 +1075,45 @@ async def optimize_portfolio(request: OptimizationRequest, _auth: bool = Depends
         var90_scenario_returns=var90_scenario_returns,
         var95_scenario_returns=var95_scenario_returns,
         var99_scenario_returns=var99_scenario_returns,
-        asset_mean_returns=asset_mean_returns
-    )
+        asset_mean_returns=asset_mean_returns,
+    ).model_dump()
+    return envelope(data=response_dict)
 
 
-@app.get("/api/efficient-frontier", response_model=List[EfficientFrontierPoint])
+@router.get("/efficient-frontier", tags=["Portfolio"])
 async def get_efficient_frontier(
     min_weight: float = 0.0,
     max_weight: float = 1.0,
-    n_points: int = 20,
+    n_points: int = Query(20, ge=5, le=100),  # Bounded to prevent DoS
     risk_free_rate: float = 0.0
 ):
-    if returns_df is None:
-        raise HTTPException(status_code=500, detail="Data not loaded")
+    if data_store.returns_df is None:
+        raise DataError("Data not loaded", code=ErrorCode.DATA_NOT_LOADED)
     
     # Create optimizer with requested risk-free rate
-    frontier_optimizer = CatBondOptimizer(returns_df, risk_free_rate=risk_free_rate)
+    frontier_optimizer = data_store.get_optimizer(risk_free_rate)
     frontier = frontier_optimizer.efficient_frontier(n_points, min_weight, max_weight)
-    return [EfficientFrontierPoint(**point) for point in frontier]
+    return envelope(data=frontier, meta={"n_points": len(frontier)})
 
 
-@app.get("/api/scenarios")
+@router.get("/scenarios", tags=["Data"])
 async def get_scenarios(sample_size: int = 1000):
     """Get a sample of scenario returns for visualization."""
+    returns_df = data_store.returns_df
     if returns_df is None:
-        raise HTTPException(status_code=500, detail="Data not loaded")
+        raise DataError("Data not loaded", code=ErrorCode.DATA_NOT_LOADED)
     
     # Sample scenarios
     n = len(returns_df)
     indices = np.linspace(0, n - 1, min(sample_size, n), dtype=int)
     
-    return {
+    return envelope(data={
         "scenarios": indices.tolist(),
         "n_total": n,
-        "assets": returns_df.columns.tolist()
-    }
+        "assets": returns_df.columns.tolist(),
+    })
+
+app.include_router(router)
 
 
 if __name__ == "__main__":

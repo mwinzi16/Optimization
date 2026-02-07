@@ -17,7 +17,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.0.0] - 2026-01-27
+## [2.1.0] - 2026-02-07
+
+### Fixed — CRITICAL
+- **Max Sharpe transformation method** — corrected convex reformulation that produced sub-optimal portfolios
+- **Efficient frontier return space** — frontier now spans the full feasible return range instead of a truncated subset
+- **Thread-safe data store** — replaced mutable global state with a lock-guarded store to prevent data races under concurrent requests
+- **API key timing attack** — switched to `secrets.compare_digest` for constant-time API key comparison
+
+### Fixed — HIGH
+- **Custom exception hierarchy** — introduced `AppError` base with typed sub-classes; central error handler returns structured JSON
+- **LRU caching with TTL** — optimization and frontier results are cached with configurable TTL; cache invalidated on data upload/reset
+- **Validation wiring** — all request bodies are validated through Pydantic models before reaching business logic
+- **Pinned dependencies** — `requirements.txt` now uses lower+upper bounds (e.g. `>=X,<Y`) for reproducible installs
+- **Correlation ID middleware** — every request/response carries a unique `X-Correlation-ID` header for tracing
+- **Exponential utility overflow** — clamped exponent range to prevent `np.exp` overflow in CARA optimization
+
+### Fixed — MEDIUM
+- **API versioning** — all endpoints moved under `/api/v1/` prefix via `APIRouter(prefix="/api/v1")`
+- **Response envelope** — every JSON response wrapped in `{"data": …, "meta": …, "errors": …}` structure
+- **Content-type validation** — upload endpoint rejects non-CSV/Excel MIME types before processing
+
+### Added
+- **React frontend reconstruction** — full rewrite with TypeScript, Tailwind CSS, Recharts, accessibility (ARIA), keyboard shortcuts
+- **Drag-and-drop file upload** — CSV and Excel support with client-side validation and progress indicator
+- **Methodology explanations** — in-app tooltips describing each optimization method and risk metric
+- **Docker deployment** — production-ready Dockerfiles (backend, frontend, Streamlit) and `docker-compose.yml`
+- **`requirements-dev.txt`** — pytest, ruff, black, mypy, bandit, safety
+- **`requirements-streamlit.txt`** — streamlit + plotly for standalone app
 
 ### Added
 
@@ -121,6 +148,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 2.1.0 | 2026-02-07 | Critical fixes, Docker deployment, React frontend, dev tooling |
 | 2.0.0 | 2026-01-27 | Enterprise features: A11Y, exports, docs, code quality |
 | 1.0.0 | 2026-01-15 | Initial release with 6 optimization methods |
 

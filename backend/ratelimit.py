@@ -3,6 +3,9 @@
 This implementation is intentionally lightweight and should be replaced with
 an external store (Redis) for multi-worker deployments.
 """
+
+from __future__ import annotations
+
 import time
 from typing import Dict
 from starlette.middleware.base import BaseHTTPMiddleware

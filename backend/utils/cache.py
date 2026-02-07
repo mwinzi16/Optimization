@@ -3,6 +3,8 @@ Caching utilities for optimization results.
 Implements LRU cache with TTL for efficient frontier and other expensive operations.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 from dataclasses import dataclass

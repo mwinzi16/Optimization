@@ -3,6 +3,8 @@ Logging configuration for Portfolio Optimizer.
 Enterprise-grade logging with structured output.
 """
 
+from __future__ import annotations
+
 import logging
 import sys
 from datetime import datetime

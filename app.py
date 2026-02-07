@@ -5,6 +5,8 @@ A state-of-the-art portfolio optimization tool for catastrophe bonds
 with interactive visualizations and comprehensive risk analytics.
 """
 
+from __future__ import annotations
+
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -184,7 +186,7 @@ class OptimizationResult:
     cvar_95: float
     var_99: float
     cvar_99: float
-    max_drawdown: float
+    worst_scenario: float
     objective: str
     status: str
     portfolio_returns: np.ndarray = None
@@ -202,13 +204,19 @@ class CatBondOptimizer:
         
         self.mean_returns = returns_df.mean().values
         self.cov_matrix = returns_df.cov().values
+        
+        # Ensure covariance matrix is positive semi-definite
+        eigenvalues = np.linalg.eigvalsh(self.cov_matrix)
+        if eigenvalues.min() < 1e-10:
+            self.cov_matrix += np.eye(self.n_assets) * 1e-8
+        
         self.returns_matrix = returns_df.values
         
     def _compute_portfolio_metrics(self, weights: np.ndarray) -> dict:
         port_returns = self.returns_matrix @ weights
         
         exp_return = np.mean(port_returns)
-        volatility = np.std(port_returns)
+        volatility = np.std(port_returns, ddof=1)
         sharpe = (exp_return - self.rf) / volatility if volatility > 0 else 0
         
         var_95 = np.percentile(port_returns, 5)
@@ -216,7 +224,7 @@ class CatBondOptimizer:
         cvar_95 = port_returns[port_returns <= var_95].mean() if (port_returns <= var_95).any() else var_95
         cvar_99 = port_returns[port_returns <= var_99].mean() if (port_returns <= var_99).any() else var_99
         
-        max_drawdown = port_returns.min()
+        worst_scenario = port_returns.min()
         
         return {
             "expected_return": exp_return,
@@ -226,36 +234,52 @@ class CatBondOptimizer:
             "cvar_95": cvar_95,
             "var_99": var_99,
             "cvar_99": cvar_99,
-            "max_drawdown": max_drawdown,
+            "worst_scenario": worst_scenario,
             "portfolio_returns": port_returns,
         }
     
     def optimize_max_sharpe(self, min_weight: float = 0.0, max_weight: float = 1.0) -> OptimizationResult:
-        y = cp.Variable(self.n_assets)
-        k = cp.Variable(pos=True)
+        """
+        Maximize Sharpe Ratio using the transformation method.
         
+        Solves: min y'Σy  s.t. (μ - rf)'y = 1, y >= 0
+        Then normalizes: w = y / sum(y)
+        
+        This is the Cornish-Fisher tangency portfolio approach.
+        Weight constraints are enforced in the transformed space.
+        """
         excess_returns = self.mean_returns - self.rf
+        
+        # If all excess returns are non-positive, fall back to min variance
+        if np.all(excess_returns <= 0):
+            return self.optimize_min_variance(min_weight, max_weight)
+        
+        y = cp.Variable(self.n_assets)
         portfolio_var = cp.quad_form(y, self.cov_matrix)
         
+        # Sharpe transformation: fix excess return = 1, minimize variance
         constraints = [
-            cp.sum(y) == 1,
-            excess_returns @ y >= 0.001,
+            excess_returns @ y == 1,  # Key transformation constraint
             y >= 0,
         ]
         
+        # Weight constraints in transformed space: w_i = y_i / sum(y)
+        # w_i >= min_weight  ⟺  y_i >= min_weight * sum(y)
+        # w_i <= max_weight  ⟺  y_i <= max_weight * sum(y)
         if min_weight > 0:
-            constraints.append(y >= min_weight * k)
+            constraints.append(y >= min_weight * cp.sum(y))
         if max_weight < 1:
-            constraints.append(y <= max_weight * k)
+            constraints.append(y <= max_weight * cp.sum(y))
         
         problem = cp.Problem(cp.Minimize(portfolio_var), constraints)
         problem.solve(solver=cp.CLARABEL)
         
-        if problem.status != "optimal":
+        if problem.status != "optimal" or y.value is None or np.sum(y.value) <= 0:
             weights = np.ones(self.n_assets) / self.n_assets
             status = f"Fallback: {problem.status}"
         else:
-            weights = y.value / np.sum(y.value)
+            y_vals = np.maximum(y.value, 0)
+            weights = y_vals / np.sum(y_vals)
             status = "optimal"
         
         metrics = self._compute_portfolio_metrics(weights)
@@ -432,16 +456,16 @@ class CatBondOptimizer:
         
         def negative_expected_utility(weights):
             port_returns = self.returns_matrix @ weights
-            utilities = np.exp(-risk_aversion * scale * port_returns)
+            exponents = np.clip(-risk_aversion * scale * port_returns, -500, 500)
+            utilities = np.exp(exponents)
             return np.mean(utilities)
         
         def gradient(weights):
             port_returns = self.returns_matrix @ weights
-            exp_terms = np.exp(-risk_aversion * scale * port_returns)
-            grad = np.zeros(self.n_assets)
-            for i in range(self.n_assets):
-                grad[i] = np.mean(-risk_aversion * scale * self.returns_matrix[:, i] * exp_terms)
-            return grad
+            exponents = np.clip(-risk_aversion * scale * port_returns, -500, 500)
+            exp_terms = np.exp(exponents)
+            # Vectorized gradient
+            return np.mean(-risk_aversion * scale * self.returns_matrix * exp_terms[:, np.newaxis], axis=0)
         
         constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
         bounds = [(min_weight, max_weight) for _ in range(self.n_assets)]
@@ -465,7 +489,8 @@ class CatBondOptimizer:
         
         # Compute expected utility for display
         port_returns = self.returns_matrix @ weights
-        expected_utility = -np.mean(np.exp(-risk_aversion * scale * port_returns)) / risk_aversion
+        exponents = np.clip(-risk_aversion * scale * port_returns, -500, 500)
+        expected_utility = -np.mean(np.exp(exponents)) / risk_aversion
         metrics["expected_utility"] = expected_utility
         
         return OptimizationResult(
@@ -481,7 +506,9 @@ class CatBondOptimizer:
         max_return = self.mean_returns.max()
         min_return = min_var_result.expected_return
         
-        target_returns = np.linspace(min_return, max_return * 0.95, n_points)
+        # Fix: handle negative max_return properly
+        upper_target = max_return - 0.05 * abs(max_return - min_return) if max_return != min_return else max_return
+        target_returns = np.linspace(min_return, upper_target, n_points)
         
         frontier_data = []
         for target in target_returns:
@@ -753,7 +780,7 @@ def load_data(file_path: str) -> pd.DataFrame:
     return pd.read_csv(file_path, index_col=0)
 
 
-def compute_additional_stats(portfolio_returns: np.ndarray) -> dict:
+def compute_additional_stats(portfolio_returns: np.ndarray, rf: float = 0.04) -> dict:
     """Compute additional portfolio statistics."""
     
     returns = portfolio_returns
@@ -780,12 +807,12 @@ def compute_additional_stats(portfolio_returns: np.ndarray) -> dict:
     skewness = pd.Series(returns).skew()
     kurtosis = pd.Series(returns).kurtosis()
     
-    # Downside deviation
-    downside_returns = returns[returns < 0]
-    downside_dev = np.std(downside_returns) if len(downside_returns) > 0 else 0
+    # Standard downside deviation (Sortino): sqrt(mean(min(r - MAR, 0)^2))
+    downside_diff = np.minimum(returns - rf, 0)
+    downside_dev = np.sqrt(np.mean(downside_diff ** 2))
     
-    # Sortino ratio (assuming rf = 4%)
-    excess_return = np.mean(returns) - 0.04
+    # Sortino ratio
+    excess_return = np.mean(returns) - rf
     sortino = excess_return / downside_dev if downside_dev > 0 else 0
     
     return {
@@ -816,15 +843,46 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Load data
+    # Load data - with file upload option
     data_path = Path(__file__).parent / "data" / "scenario_returns.csv"
     
-    if not data_path.exists():
-        st.error(f"Data file not found: {data_path}")
-        st.info("Please run `generate_sample_data.py` first to create the sample dataset.")
-        return
-    
-    returns_df = load_data(str(data_path))
+    with st.sidebar:
+        st.markdown("### \U0001F4C1 Data Source")
+        
+        uploaded_file = st.file_uploader(
+            "Upload custom returns data",
+            type=["csv", "xlsx", "xls"],
+            help="Upload a CSV or Excel file with scenario returns. First column = scenario index, other columns = asset returns."
+        )
+        
+        if uploaded_file is not None:
+            try:
+                if uploaded_file.name.lower().endswith('.csv'):
+                    returns_df = pd.read_csv(uploaded_file, index_col=0)
+                else:
+                    returns_df = pd.read_excel(uploaded_file, index_col=0)
+                
+                # Validate
+                returns_df = returns_df.apply(pd.to_numeric, errors='coerce')
+                returns_df = returns_df.dropna(axis=1, how='all').dropna(axis=0, how='all')
+                
+                if returns_df.shape[1] < 2:
+                    st.error("Need at least 2 assets")
+                    return
+                if returns_df.shape[0] < 10:
+                    st.error("Need at least 10 scenarios")
+                    return
+                
+                st.success(f"\u2705 Loaded {returns_df.shape[0]:,} scenarios \u00d7 {returns_df.shape[1]} assets")
+            except Exception as e:
+                st.error(f"Error reading file: {e}")
+                return
+        elif data_path.exists():
+            returns_df = load_data(str(data_path))
+        else:
+            st.error(f"Data file not found: {data_path}")
+            st.info("Please run `generate_sample_data.py` first or upload your own data.")
+            return
     
     # Sidebar - Optimization Settings
     with st.sidebar:
@@ -852,6 +910,54 @@ def main():
             ],
             help="Select the optimization objective"
         )
+        
+        # Method descriptions
+        method_descriptions = {
+            "Maximum Sharpe Ratio": {
+                "goal": "Find the portfolio with the highest risk-adjusted return.",
+                "description": "Maximizes the ratio of excess return (above risk-free rate) to volatility. The tangency portfolio on the efficient frontier.",
+                "formula": r"SR = \frac{E[R_p] - R_f}{\sigma_p}",
+                "best_for": "Investors seeking the most efficient risk-return trade-off."
+            },
+            "Minimum Variance": {
+                "goal": "Find the portfolio with the lowest possible volatility.",
+                "description": "Minimizes portfolio standard deviation through diversification. Often allocates to low-correlation assets.",
+                "formula": r"\min \sqrt{w^T \Sigma w}",
+                "best_for": "Conservative investors prioritizing stability over returns."
+            },
+            "Minimum CVaR": {
+                "goal": "Minimize expected losses in worst-case scenarios.",
+                "description": "Minimizes Conditional Value at Risk (Expected Shortfall) \u2014 the average loss in the worst \u03b1% of scenarios. Uses the Rockafellar-Uryasev LP formulation.",
+                "formula": r"\min CVaR_\alpha = E[L \mid L > VaR_\alpha]",
+                "best_for": "Risk-averse investors focused on tail risk protection."
+            },
+            "Mean-CVaR Trade-off": {
+                "goal": "Balance expected return against tail risk.",
+                "description": "Optimizes a weighted combination of return and CVaR: min(-E[R] + \u03bb\u00b7CVaR). The risk aversion parameter \u03bb controls the trade-off.",
+                "formula": r"\min \; -E[R] + \lambda \cdot CVaR_\alpha",
+                "best_for": "Investors who want explicit control over risk-return preferences."
+            },
+            "Maximum Return (Constrained)": {
+                "goal": "Maximize expected return within a risk budget.",
+                "description": "Finds the highest-return portfolio subject to a volatility or CVaR constraint. Useful when risk limits are externally imposed.",
+                "formula": r"\max E[R] \;\; \text{s.t.} \;\; \sigma \leq \sigma_{max}",
+                "best_for": "Portfolio managers with regulatory or mandate-driven risk limits."
+            },
+            "Exponential Utility (CARA)": {
+                "goal": "Optimize using a theoretically grounded risk-aversion model.",
+                "description": "Maximizes expected exponential (CARA) utility: U(W) = -e^(-C\u00b7W). Higher C penalizes downside more heavily. Based on Elton/Gruber's Modern Portfolio Theory.",
+                "formula": r"\max E[U] = E[-e^{-C \cdot 50 \cdot R}]",
+                "best_for": "Quantitative investors with well-defined risk preferences."
+            }
+        }
+        
+        with st.expander("\U0001F4D6 About this method"):
+            info = method_descriptions.get(opt_method, {})
+            st.markdown(f"**Goal:** {info.get('goal', '')}")
+            st.markdown(info.get('description', ''))
+            if info.get('formula'):
+                st.latex(info['formula'])
+            st.markdown(f"*Best for: {info.get('best_for', '')}*")
         
         # Method-specific parameters
         if opt_method == "Minimum CVaR":
@@ -954,7 +1060,7 @@ def main():
     
     result = st.session_state.result
     benchmark = optimizer.get_equal_weight_metrics()
-    additional_stats = compute_additional_stats(result.portfolio_returns)
+    additional_stats = compute_additional_stats(result.portfolio_returns, rf=rf_rate)
     
     # Status indicator
     if result.status == "optimal":
@@ -973,7 +1079,7 @@ def main():
         ("Sharpe Ratio", f"{result.sharpe_ratio:.2f}", "positive" if result.sharpe_ratio > 0 else "negative"),
         ("VaR 95%", f"{result.var_95:.2%}", "negative"),
         ("CVaR 95%", f"{result.cvar_95:.2%}", "negative"),
-        ("Max Drawdown", f"{result.max_drawdown:.2%}", "negative"),
+        ("Worst Scenario", f"{result.worst_scenario:.2%}", "negative"),
     ]
     
     for col, (label, value, color) in zip(metric_cols, metrics_data):

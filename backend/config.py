@@ -4,6 +4,9 @@ Configuration helpers for the API.
 Read runtime configuration from environment variables with sensible
 defaults for local development. Keeps secrets out of source code.
 """
+
+from __future__ import annotations
+
 import os
 from typing import List
 
@@ -36,6 +39,10 @@ RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", "60"))  # seconds
 # Keys to redact when logging dict-like data
 REDACT_KEYS = [k.strip().lower() for k in os.environ.get("REDACT_KEYS", "password,passwd,secret,api_key,authorization").split(",")]
 
+
+# Safety: never combine wildcard origin with credentials
+if "*" in CORS_ORIGINS:
+    CORS_ORIGINS = ["*"]  # Normalize
 
 __all__ = [
     "CORS_ORIGINS",
