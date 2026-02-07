@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}500 — Internal Server Error{% endblock %}
+
+{% block sidebar %}{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-center min-h-[80vh]">
+    <div class="text-center">
+        <h1 class="text-7xl font-extrabold text-navy mb-2">500</h1>
+        <p class="text-gray-500 text-lg mb-4">Internal Server Error</p>
+        <p class="text-gray-400 text-sm mb-8">Something went wrong on our end. Please try again later.</p>
+        {% if error %}
+        <details class="mb-8 max-w-md mx-auto text-left">
+            <summary class="cursor-pointer text-sm text-gray-400 hover:text-gray-600">Error details</summary>
+            <pre class="mt-2 bg-gray-100 p-3 rounded-lg text-xs text-gray-600 overflow-x-auto">{{ error }}</pre>
+        </details>
+        {% endif %}
+        <a href="/"
+           class="bg-navy text-white px-6 py-2.5 rounded-lg hover:bg-navy-light transition font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-navy/50">
+            Go Home
+        </a>
+    </div>
+</div>
+{% endblock %}

@@ -1,6 +1,6 @@
 # Cat Bond Portfolio Optimizer
 
-An enterprise-grade **catastrophe bond portfolio optimization** platform with a FastAPI backend, React frontend, and standalone Streamlit app. Supports six optimization strategies, scenario-based risk analysis, efficient frontier computation, drag-and-drop file upload, and interactive visualizations.
+An enterprise-grade **catastrophe bond portfolio optimization** platform built with Flask, HTMX, Tailwind CSS, and Plotly.js. Supports six optimization strategies, scenario-based risk analysis, efficient frontier computation, drag-and-drop file upload, and interactive visualizations — all served from a single Flask application.
 
 ## Features
 
@@ -8,16 +8,16 @@ An enterprise-grade **catastrophe bond portfolio optimization** platform with a 
 - **Scenario-Based Analysis** — VaR/CVaR at multiple confidence levels, return-period analysis, loss probability
 - **Efficient Frontier** — Full frontier computation with configurable resolution
 - **File Upload** — CSV / Excel drag-and-drop with automatic validation
-- **Interactive UI** — Recharts visualizations, dark theme, glassmorphism, keyboard shortcuts, ARIA accessibility
+- **Interactive UI** — Plotly.js visualizations, HTMX-driven partial updates, dark theme, glassmorphism, keyboard shortcuts, ARIA accessibility
 - **Export** — CSV, JSON, portfolio weights, shareable URLs
 
 ## Architecture
 
 | Layer | Technology | Port |
 |-------|-----------|------|
-| **Backend API** | FastAPI + CVXPY + NumPy/Pandas/SciPy | 8000 |
-| **Frontend** | React 18 + TypeScript + Vite + Tailwind CSS + Recharts | 3000 |
-| **Streamlit App** | Streamlit + Plotly (standalone alternative UI) | 8501 |
+| **Flask Application** | Flask + Jinja2 + HTMX + Tailwind CSS + Plotly.js | 5000 |
+| **API (Blueprint)** | REST API at `/api/v1/` — CVXPY + NumPy/Pandas/SciPy | 5000 |
+| **Web UI (Blueprint)** | Server-rendered templates at `/` with HTMX interactivity | 5000 |
 
 ## Quick Start
 
@@ -27,17 +27,9 @@ An enterprise-grade **catastrophe bond portfolio optimization** platform with a 
 docker compose up --build
 ```
 
-This starts all three services:
-
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost:3000 |
-| Backend API | http://localhost:8000/api/v1/health |
-| Streamlit | http://localhost:8501 |
+Single service available at http://localhost:5000.
 
 ### Manual Setup
-
-#### Backend
 
 ```bash
 cd Optimization
@@ -46,60 +38,68 @@ python -m venv .venv
 # source .venv/bin/activate   # Linux/macOS
 pip install -r requirements.txt
 
-cd backend
-uvicorn api:app --reload --port 8000
+python run.py
 ```
 
-#### Frontend
+Open http://localhost:5000.
+
+### Production (gunicorn)
 
 ```bash
-cd frontend
-npm install
-npm run dev
+gunicorn run:app --bind 0.0.0.0:5000 --workers 2
 ```
-
-Open http://localhost:3000.
-
-#### Streamlit (standalone)
-
-```bash
-pip install -r requirements-streamlit.txt
-streamlit run app.py
-```
-
-Open http://localhost:8501.
 
 ## Project Structure
 
 ```
 Optimization/
-├── backend/
-│   ├── api.py                  # FastAPI application
-│   └── utils/
-│       ├── cache.py            # LRU caching with TTL
-│       ├── exceptions.py       # Custom exception hierarchy
-│       ├── logger.py           # Structured logging + correlation IDs
-│       └── validation.py       # Pydantic input validation
-├── frontend/
-│   ├── src/
-│   │   ├── components/         # React components
-│   │   ├── hooks/              # Custom React hooks
-│   │   ├── utils/              # Helpers (format, export, constants)
-│   │   ├── App.tsx             # Main application
-│   │   └── api.ts              # API client
-│   ├── Dockerfile              # Multi-stage Node + nginx
-│   ├── nginx.conf              # SPA routing + API proxy
-│   └── package.json
+├── app/
+│   ├── __init__.py             # create_app() application factory
+│   ├── config.py               # Settings dataclass (env vars)
+│   ├── extensions.py           # CORS, Limiter, CSRF, Talisman
+│   ├── blueprints/
+│   │   ├── api_v1.py           # REST API endpoints (/api/v1/)
+│   │   └── web.py              # Web UI routes (/)
+│   ├── services/
+│   │   ├── optimizer.py        # CatBondOptimizer (CVXPY/SciPy)
+│   │   ├── data_store.py       # Thread-safe data management
+│   │   └── stats.py            # Portfolio statistics
+│   ├── schemas/
+│   │   ├── optimization.py     # Pydantic request models
+│   │   └── responses.py        # Pydantic response envelopes
+│   ├── utils/
+│   │   ├── auth.py             # API key authentication
+│   │   ├── cache.py            # LRU caching with TTL
+│   │   ├── charts.py           # Plotly chart generators
+│   │   ├── exceptions.py       # Custom exception hierarchy
+│   │   ├── logger.py           # Structured logging + correlation IDs
+│   │   └── validation.py       # Input validation helpers
+│   ├── templates/
+│   │   ├── base.html           # Jinja2 base layout
+│   │   ├── index.html          # Main application page
+│   │   ├── partials/           # HTMX swap targets
+│   │   │   ├── data_status.html
+│   │   │   ├── method_params.html
+│   │   │   ├── optimization_results.html
+│   │   │   └── toast.html
+│   │   └── errors/
+│   │       ├── 404.html
+│   │       └── 500.html
+│   └── static/
+│       ├── css/app.css         # Tailwind CSS output
+│       └── js/app.js           # Client-side JS (HTMX helpers)
 ├── data/
 │   ├── scenario_returns.csv    # Sample scenario data
 │   └── asset_info.csv          # Asset metadata
-├── app.py                      # Standalone Streamlit app
-├── Dockerfile                  # Backend (multi-stage)
-├── Dockerfile.streamlit        # Streamlit container
-├── docker-compose.yml          # Full-stack orchestration
+├── tests/                      # pytest test suite (192+ tests)
+│   ├── conftest.py             # Flask app/client fixtures
+│   └── test_*.py               # Unit + integration tests
+├── docs/                       # Documentation
+├── run.py                      # Entry point (direct + gunicorn)
+├── Dockerfile                  # Multi-stage production image
+├── docker-compose.yml          # Single-service orchestration
 ├── requirements.txt            # Runtime dependencies
 ├── requirements-dev.txt        # Dev/test dependencies
-├── requirements-streamlit.txt  # Streamlit dependencies
 ├── CHANGELOG.md
 └── README.md
 ```
@@ -145,34 +145,31 @@ All endpoints are served under the `/api/v1/` prefix.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `API_PORT` | `8000` | Backend listen port |
+| `SECRET_KEY` | `dev-secret-change-in-production` | Flask secret key (change in production) |
+| `BIND_HOST` | `127.0.0.1` | Server bind address |
+| `BIND_PORT` | `5000` | Server listen port |
+| `ALLOW_ANONYMOUS` | `true` | Allow unauthenticated access |
+| `API_KEY` | *(none)* | API key for authenticated access |
+| `CORS_ORIGINS` | `*` | Comma-separated allowed origins |
+| `RATE_LIMIT_DEFAULT` | `60/minute` | Default rate limit |
+| `MAX_UPLOAD_SIZE` | `10485760` | Maximum file upload size (bytes) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (DEBUG, INFO, WARNING, ERROR) |
-| `VITE_API_BASE` | `http://localhost:8000` | Frontend API base URL (`.env`) |
+| `DATA_PATH` | `data/scenario_returns.csv` | Path to default scenario data |
 
 ## Testing
-
-### Backend
 
 ```bash
 pip install -r requirements-dev.txt
 
 # Unit + integration tests
-pytest --cov=backend --cov-report=term-missing
+pytest --cov=app --cov-report=term-missing
 
 # Linting & formatting
-ruff check backend/
-black --check backend/
+ruff check app/
+black --check app/
 
 # Security scan
-bandit -r backend/
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm run lint
-npm run format
+bandit -r app/
 ```
 
 ## Deployment
@@ -180,22 +177,24 @@ npm run format
 ### Docker
 
 ```bash
-# Build and run all services
+# Build and run
 docker compose up --build -d
 
-# Build individual images
-docker build -t portfolio-backend .
-docker build -t portfolio-frontend frontend/
-docker build -f Dockerfile.streamlit -t portfolio-streamlit .
+# View logs
+docker compose logs -f
+
+# Stop
+docker compose down
 ```
 
 ### Production Notes
 
-- Backend runs with 2 Uvicorn workers by default
-- Frontend is served via nginx with SPA fallback routing
-- API requests from the frontend are proxied through nginx at `/api/v1/`
-- All containers run as non-root users
-- Health checks are configured for backend and Streamlit containers
+- Application runs with gunicorn (2 workers by default, 120 s timeout)
+- Flask serves both templates and API — no separate frontend build or nginx required
+- Container runs as non-root user (`appuser`)
+- Health check configured at `/api/v1/health`
+- Set `SECRET_KEY` to a strong random value in production
+- Configure `CORS_ORIGINS` to specific domains in production
 
 ## Documentation
 
@@ -215,5 +214,7 @@ This project is proprietary software.
 ## Acknowledgments
 
 - [CVXPY](https://www.cvxpy.org/) for convex optimization
-- [Recharts](https://recharts.org/) for React chart components
+- [Flask](https://flask.palletsprojects.com/) for the web framework
+- [HTMX](https://htmx.org/) for hypermedia-driven interactivity
+- [Plotly](https://plotly.com/python/) for interactive chart visualizations
 - [Tailwind CSS](https://tailwindcss.com/) for utility-first styling

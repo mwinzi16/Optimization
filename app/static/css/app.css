@@ -1,0 +1,49 @@
+/* Cat Bond Portfolio Optimizer — Custom Styles
+   Supplement Tailwind utility classes with app-specific rules.
+*/
+
+/* HTMX loading indicator: hidden by default, shown when htmx is loading */
+.htmx-indicator {
+    display: none !important;
+}
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+    display: flex !important;
+}
+
+/* Range input thumb styling (cross-browser) */
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    height: 16px;
+    width: 16px;
+    border-radius: 50%;
+    background: #1e3a5f;
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+input[type="range"]::-moz-range-thumb {
+    height: 16px;
+    width: 16px;
+    border-radius: 50%;
+    background: #1e3a5f;
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Scrollbar styling for sidebar */
+#sidebar::-webkit-scrollbar {
+    width: 4px;
+}
+#sidebar::-webkit-scrollbar-track {
+    background: transparent;
+}
+#sidebar::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 2px;
+}
+#sidebar::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+}

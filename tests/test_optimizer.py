@@ -10,7 +10,45 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from backend.api import CatBondOptimizer
+from app.services.optimizer import CatBondOptimizer
+
+
+# =====================================================================
+# Initialization
+# =====================================================================
+
+
+class TestOptimizerInit:
+    """Tests for CatBondOptimizer constructor."""
+
+    def test_optimizer_initialization(
+        self, optimizer: CatBondOptimizer
+    ) -> None:
+        assert optimizer.n_assets == 5
+        assert optimizer.n_scenarios == 500
+        assert len(optimizer.assets) == 5
+
+    def test_optimizer_covariance_is_square(
+        self, optimizer: CatBondOptimizer
+    ) -> None:
+        assert optimizer.cov_matrix.shape == (5, 5)
+
+
+# =====================================================================
+# Equal-weight metrics
+# =====================================================================
+
+
+class TestEqualWeight:
+    """Tests for get_equal_weight_metrics."""
+
+    def test_equal_weight_metrics(self, optimizer: CatBondOptimizer) -> None:
+        metrics = optimizer.get_equal_weight_metrics()
+        assert "expected_return" in metrics
+        assert "volatility" in metrics
+        assert "sharpe_ratio" in metrics
+        assert "portfolio_returns" in metrics
+        assert isinstance(metrics["portfolio_returns"], list)
 
 
 # =====================================================================

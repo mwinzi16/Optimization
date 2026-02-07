@@ -1,32 +1,32 @@
-"""
-Shared pytest fixtures for the portfolio optimizer test suite.
+"""Shared pytest fixtures for the portfolio optimizer test suite.
 
 Provides:
-    - FastAPI async test client (httpx)
-    - Deterministic sample returns DataFrame (5 assets, 500 scenarios)
-    - Pre-built CatBondOptimizer instance
-    - Equal-weight portfolio vector
+    - Flask test app with real sample data
+    - Flask test client
+    - API / auth header helpers
+    - Synthetic CSV data for upload testing
+    - CatBondOptimizer and helper fixtures for unit tests
 """
 
 from __future__ import annotations
 
-import os
-
-# MUST be set before any backend imports so that config.ALLOW_ANONYMOUS is True
-os.environ["ALLOW_ANONYMOUS"] = "true"
+import io
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
-import httpx
-from httpx import ASGITransport
+from flask import Flask
+from flask.testing import FlaskClient
 
-from backend.api import CatBondOptimizer, app
+from app.config import Settings
+from app.services.optimizer import CatBondOptimizer
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _generate_cat_bond_returns(
     n_assets: int = 5,
@@ -37,25 +37,15 @@ def _generate_cat_bond_returns(
 
     Most scenarios receive a coupon (~5 %).  A small fraction suffer
     catastrophe losses ranging from -10 % to -80 %.
-
-    Args:
-        n_assets: Number of bonds / columns.
-        n_scenarios: Number of return scenarios / rows.
-        seed: Random seed for reproducibility.
-
-    Returns:
-        DataFrame with shape (n_scenarios, n_assets).
     """
     rng = np.random.default_rng(seed)
-    asset_names = [f"CatBond_{chr(65 + i)}" for i in range(n_assets)]  # A-E
+    asset_names = [f"CatBond_{chr(65 + i)}" for i in range(n_assets)]
 
     data: dict[str, np.ndarray] = {}
     for i, name in enumerate(asset_names):
-        # Base coupon with slight noise per asset
-        coupon = 0.04 + 0.02 * (i / max(n_assets - 1, 1))  # 4 %–6 %
+        coupon = 0.04 + 0.02 * (i / max(n_assets - 1, 1))
         returns = rng.normal(loc=coupon, scale=0.005, size=n_scenarios)
 
-        # Inject rare catastrophe losses (~8 % of scenarios)
         n_losses = int(n_scenarios * 0.08)
         loss_indices = rng.choice(n_scenarios, size=n_losses, replace=False)
         losses = rng.uniform(-0.80, -0.10, size=n_losses)
@@ -67,8 +57,96 @@ def _generate_cat_bond_returns(
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Application fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def app() -> Flask:
+    """Create a Flask app configured for testing with real sample data."""
+    from app import create_app
+
+    settings = Settings(
+        SECRET_KEY="test-secret",
+        ALLOW_ANONYMOUS=True,
+        DATA_PATH=str(Path(__file__).parent.parent / "data" / "scenario_returns.csv"),
+    )
+    application = create_app(settings)
+    application.config["TESTING"] = True
+    return application
+
+
+@pytest.fixture()
+def client(app: Flask) -> FlaskClient:
+    """Flask test client."""
+    return app.test_client()
+
+
+@pytest.fixture()
+def api_headers() -> dict[str, str]:
+    """Standard JSON request headers."""
+    return {"Content-Type": "application/json"}
+
+
+@pytest.fixture()
+def auth_headers() -> dict[str, str]:
+    """Headers with a valid API key for auth-protected endpoints."""
+    return {"X-API-Key": "test-key", "Content-Type": "application/json"}
+
+
+@pytest.fixture()
+def sample_csv_bytes() -> bytes:
+    """Create a minimal valid CSV in memory (3 asset columns, 150 rows)."""
+    rng = np.random.default_rng(42)
+    data = rng.normal(loc=0.05, scale=0.10, size=(150, 3))
+    df = pd.DataFrame(data, columns=["Bond_A", "Bond_B", "Bond_C"])
+    buf = io.BytesIO()
+    df.to_csv(buf, index=True)
+    return buf.getvalue()
+
+
+@pytest.fixture()
+def sample_invalid_csv_bytes() -> bytes:
+    """Create a CSV that fails validation (only 1 numeric column)."""
+    rng = np.random.default_rng(99)
+    data = rng.normal(loc=0.05, scale=0.10, size=(150, 1))
+    df = pd.DataFrame(data, columns=["Only_Asset"])
+    buf = io.BytesIO()
+    df.to_csv(buf, index=True)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Non-anonymous app (for auth tests)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def nonanon_app() -> Flask:
+    """Create a Flask app with ALLOW_ANONYMOUS=False for auth tests."""
+    from app import create_app
+
+    settings = Settings(
+        SECRET_KEY="test-secret",
+        ALLOW_ANONYMOUS=False,
+        API_KEY="test-secret-key",
+        DATA_PATH=str(Path(__file__).parent.parent / "data" / "scenario_returns.csv"),
+    )
+    application = create_app(settings)
+    application.config["TESTING"] = True
+    return application
+
+
+@pytest.fixture()
+def nonanon_client(nonanon_app: Flask) -> FlaskClient:
+    """Flask test client for the non-anonymous app."""
+    return nonanon_app.test_client()
+
+
+# ---------------------------------------------------------------------------
+# Optimizer unit-test fixtures
+# ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session")
 def sample_returns() -> pd.DataFrame:
@@ -87,11 +165,3 @@ def equal_weights(sample_returns: pd.DataFrame) -> np.ndarray:
     """Equal-weight vector matching the number of sample assets."""
     n = sample_returns.shape[1]
     return np.ones(n) / n
-
-
-@pytest.fixture
-async def client():
-    """Async httpx test client wired to the FastAPI application."""
-    transport = ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac

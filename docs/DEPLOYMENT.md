@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This guide covers deployment options for the Portfolio Optimizer, from local development to production environments.
+This guide covers deployment options for the Cat Bond Portfolio Optimizer, from local development to production environments.
 
 ## Table of Contents
 
@@ -16,15 +16,14 @@ This guide covers deployment options for the Portfolio Optimizer, from local dev
 
 ### Prerequisites
 
-- Python 3.10+ with pip
-- Node.js 18+ with npm
+- Python 3.12+ with pip
 - Git
 
-### Backend Setup
+### Setup
 
 ```bash
 # Navigate to project root
-cd portfolio-optimizer
+cd Optimization
 
 # Create virtual environment
 python -m venv .venv
@@ -39,164 +38,88 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # Start development server
-cd backend
-uvicorn api:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Frontend Setup
-
-```bash
-# Navigate to frontend
-cd frontend
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
+python run.py
 ```
 
 ### Access Application
 
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:8000
-- API Docs: http://localhost:8000/docs
+- Web UI: http://localhost:5000
+- API Health: http://localhost:5000/api/v1/health
+
+The development server runs with `debug=True` by default when started via `python run.py`.
 
 ---
 
 ## Docker Deployment
 
-### Dockerfile (Backend)
+### Dockerfile
+
+The project uses a multi-stage Dockerfile for a minimal production image:
 
 ```dockerfile
-# backend/Dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
+# Stage 1: install dependencies
+FROM python:3.12-slim AS builder
+WORKDIR /build
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-# Copy application code
-COPY . .
-
-# Run with Gunicorn
-CMD ["gunicorn", "api:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000"]
-```
-
-### Dockerfile (Frontend)
-
-```dockerfile
-# frontend/Dockerfile
-FROM node:18-alpine AS builder
-
+# Stage 2: runtime
+FROM python:3.12-slim
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
 WORKDIR /app
-
-# Install dependencies
-COPY package*.json ./
-RUN npm ci
-
-# Build application
-COPY . .
-RUN npm run build
-
-# Production stage
-FROM nginx:alpine
-
-# Copy built files
-COPY --from=builder /app/dist /usr/share/nginx/html
-
-# Copy nginx config
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+COPY --from=builder /install /usr/local
+COPY app/ ./app/
+COPY run.py .
+COPY data/ ./data/
+RUN chown -R appuser:appuser /app
+USER appuser
+EXPOSE 5000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/v1/health')" || exit 1
+CMD ["gunicorn", "run:app", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "120"]
 ```
 
 ### Docker Compose
 
 ```yaml
-# docker-compose.yml
-version: '3.8'
-
 services:
-  backend:
-    build: ./backend
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "5000:5000"
     environment:
-      - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
-    volumes:
-      - ./data:/app/data
+      - SECRET_KEY=${SECRET_KEY:-change-me}
+      - ALLOW_ANONYMOUS=${ALLOW_ANONYMOUS:-true}
+      - BIND_HOST=0.0.0.0
+      - BIND_PORT=5000
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/v1/health')"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
-
-  frontend:
-    build: ./frontend
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
-    environment:
-      - API_URL=http://backend:8000
-
-  # Optional: Redis for caching
-  redis:
-    image: redis:alpine
-    ports:
-      - "6379:6379"
+      start_period: 10s
 ```
 
 ### Build and Run
 
 ```bash
-# Build images
-docker-compose build
-
-# Start services
-docker-compose up -d
+# Build and start
+docker compose up --build -d
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
-# Stop services
-docker-compose down
+# Stop
+docker compose down
 ```
 
 ---
 
 ## Cloud Deployment
-
-### AWS (Elastic Beanstalk)
-
-1. **Prepare application:**
-   ```bash
-   # Create .ebextensions for configuration
-   mkdir .ebextensions
-   ```
-
-2. **Create Procfile:**
-   ```
-   web: gunicorn api:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000
-   ```
-
-3. **Deploy:**
-   ```bash
-   eb init -p python-3.11 portfolio-optimizer
-   eb create production
-   eb deploy
-   ```
 
 ### Google Cloud Run
 
@@ -210,7 +133,8 @@ gcloud run deploy ils-optimizer \
   --platform managed \
   --allow-unauthenticated \
   --memory 2Gi \
-  --cpu 2
+  --cpu 2 \
+  --port 5000
 ```
 
 ### Azure Container Apps
@@ -222,7 +146,7 @@ az containerapp create \
   --resource-group myResourceGroup \
   --environment myEnvironment \
   --image myregistry.azurecr.io/ils-optimizer:latest \
-  --target-port 8000 \
+  --target-port 5000 \
   --ingress external \
   --cpu 2 \
   --memory 4Gi
@@ -247,10 +171,20 @@ spec:
         app: ils-optimizer
     spec:
       containers:
-      - name: backend
+      - name: app
         image: ils-optimizer:latest
         ports:
-        - containerPort: 8000
+        - containerPort: 5000
+        env:
+        - name: BIND_HOST
+          value: "0.0.0.0"
+        - name: BIND_PORT
+          value: "5000"
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ils-optimizer-secrets
+              key: secret-key
         resources:
           requests:
             memory: "512Mi"
@@ -260,14 +194,14 @@ spec:
             cpu: "2000m"
         livenessProbe:
           httpGet:
-            path: /api/health
-            port: 8000
+            path: /api/v1/health
+            port: 5000
           initialDelaySeconds: 10
           periodSeconds: 30
         readinessProbe:
           httpGet:
-            path: /api/health
-            port: 8000
+            path: /api/v1/health
+            port: 5000
           initialDelaySeconds: 5
           periodSeconds: 10
 ---
@@ -280,7 +214,7 @@ spec:
     app: ils-optimizer
   ports:
   - port: 80
-    targetPort: 8000
+    targetPort: 5000
   type: LoadBalancer
 ```
 
@@ -290,32 +224,33 @@ spec:
 
 ### Security
 
-- [ ] Enable HTTPS/TLS certificates
-- [ ] Configure CORS for specific origins only
-- [ ] Implement rate limiting
-- [ ] Add authentication (OAuth2/JWT)
-- [ ] Sanitize file uploads
-- [ ] Enable security headers (HSTS, CSP, etc.)
+- [ ] Set `SECRET_KEY` to a strong random value
+- [ ] Enable HTTPS/TLS certificates (set `force_https=True` in Talisman)
+- [ ] Configure `CORS_ORIGINS` for specific domains only
+- [ ] Set `ALLOW_ANONYMOUS=false` and configure `API_KEY` if auth is needed
+- [ ] Configure `RATE_LIMIT_DEFAULT` appropriately
+- [ ] Sanitize file uploads (max size via `MAX_UPLOAD_SIZE`)
+- [ ] Review Flask-Talisman CSP settings per environment
 
 ### Performance
 
-- [ ] Enable response compression (gzip/brotli)
-- [ ] Configure CDN for static assets
-- [ ] Set up Redis for optimization caching
-- [ ] Use multiple Gunicorn workers (2-4 per CPU)
-- [ ] Enable HTTP/2
+- [ ] Enable response compression (gzip/brotli via reverse proxy or middleware)
+- [ ] Configure CDN for static assets (`/static/`)
+- [ ] Set up Redis for optimization caching (future enhancement)
+- [ ] Use 2–4 gunicorn workers per CPU core
+- [ ] Tune `--timeout` for long-running optimizations
 
 ### Reliability
 
-- [ ] Configure health checks
-- [ ] Set up auto-scaling
-- [ ] Implement graceful shutdown
+- [ ] Configure health checks (`/api/v1/health`)
+- [ ] Set up auto-scaling (Kubernetes HPA or cloud-native)
+- [ ] Implement graceful shutdown (`--graceful-timeout`)
 - [ ] Configure connection timeouts
 - [ ] Set up database backups (if applicable)
 
 ### Observability
 
-- [ ] Configure structured logging
+- [ ] Configure structured logging (`LOG_LEVEL=INFO`)
 - [ ] Set up error tracking (Sentry)
 - [ ] Enable metrics collection (Prometheus)
 - [ ] Create dashboards (Grafana)
@@ -324,14 +259,17 @@ spec:
 ### Environment Variables
 
 ```bash
-# Backend
-LOG_LEVEL=INFO              # Logging verbosity
-CORS_ORIGINS=https://app.example.com  # Allowed origins
-CACHE_TTL=3600              # Cache time-to-live (seconds)
-MAX_UPLOAD_SIZE=10485760    # Max file upload (bytes)
-
-# Frontend (build-time)
-VITE_API_URL=https://api.example.com  # API base URL
+# Application
+SECRET_KEY=<strong-random-value>
+BIND_HOST=0.0.0.0
+BIND_PORT=5000
+LOG_LEVEL=INFO
+ALLOW_ANONYMOUS=false
+API_KEY=<your-api-key>
+CORS_ORIGINS=https://app.example.com
+MAX_UPLOAD_SIZE=10485760
+RATE_LIMIT_DEFAULT=60/minute
+DATA_PATH=/app/data/scenario_returns.csv
 ```
 
 ---
@@ -340,36 +278,31 @@ VITE_API_URL=https://api.example.com  # API base URL
 
 ### Health Endpoint
 
-The `/api/health` endpoint returns:
+The `/api/v1/health` endpoint returns:
 
 ```json
 {
-  "status": "healthy",
-  "data_loaded": true,
-  "timestamp": "2026-01-27T12:00:00Z"
+  "data": {
+    "status": "healthy",
+    "data_loaded": true
+  },
+  "meta": {
+    "timestamp": "2026-02-14T12:00:00Z"
+  },
+  "errors": []
 }
-```
-
-### Prometheus Metrics
-
-Add metrics collection with `prometheus-fastapi-instrumentator`:
-
-```python
-from prometheus_fastapi_instrumentator import Instrumentator
-
-Instrumentator().instrument(app).expose(app)
 ```
 
 ### Logging Format
 
-Structured JSON logs for log aggregation:
+Structured JSON logs via structlog for log aggregation:
 
 ```json
 {
-  "timestamp": "2026-01-27T12:00:00.000Z",
+  "timestamp": "2026-02-14T12:00:00.000Z",
   "level": "INFO",
   "message": "Optimization completed",
-  "request_id": "abc-123",
+  "correlation_id": "abc-123",
   "method": "max_sharpe",
   "duration_ms": 150,
   "status": "optimal"
@@ -413,7 +346,13 @@ Solution: Enable caching, reduce n_points for frontier
 **4. File upload fails:**
 ```
 Problem: Large file upload timeout
-Solution: Increase upload timeout, chunk file processing
+Solution: Increase MAX_UPLOAD_SIZE env var, increase gunicorn --timeout
+```
+
+**5. gunicorn worker timeout:**
+```
+Problem: Worker killed due to timeout on large frontier computation
+Solution: Increase --timeout (default 120s), or reduce frontier n_points
 ```
 
 ### Support

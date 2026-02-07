@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from backend.utils.exceptions import (
+from app.utils.exceptions import (
     DataError,
     ErrorCode,
     OptimizationError,
@@ -119,3 +119,20 @@ def test_error_code_is_string_enum() -> None:
 def test_all_error_codes_have_err_prefix() -> None:
     for code in ErrorCode:
         assert code.value.startswith("ERR_")
+
+
+# =====================================================================
+# API returns JSON error for OptimizerError
+# =====================================================================
+
+
+def test_api_returns_json_error_for_optimizer_error(client) -> None:
+    """The API error handler should return structured JSON for OptimizerError."""
+    # An invalid optimization method triggers a ValidationError (422)
+    resp = client.post(
+        "/api/v1/optimize",
+        json={"method": "NonExistentMethod"},
+    )
+    body = resp.get_json()
+    assert body["errors"] or body.get("data") is None
+    assert resp.status_code in (400, 422)

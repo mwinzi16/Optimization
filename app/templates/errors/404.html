@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}404 — Page Not Found{% endblock %}
+
+{% block sidebar %}{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-center min-h-[80vh]">
+    <div class="text-center">
+        <h1 class="text-7xl font-extrabold text-navy mb-2">404</h1>
+        <p class="text-gray-500 text-lg mb-6">Page not found</p>
+        <p class="text-gray-400 text-sm mb-8">The page you are looking for does not exist or has been moved.</p>
+        <a href="/"
+           class="bg-navy text-white px-6 py-2.5 rounded-lg hover:bg-navy-light transition font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-navy/50">
+            Go Home
+        </a>
+    </div>
+</div>
+{% endblock %}

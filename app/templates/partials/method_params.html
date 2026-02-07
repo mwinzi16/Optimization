@@ -1,0 +1,185 @@
+<div id="method-params" class="space-y-4">
+
+{% if method == "Minimum CVaR" %}
+<!-- CVaR Confidence Level -->
+<div>
+    <label for="cvar_alpha" class="block text-sm font-medium text-gray-700">
+        CVaR Confidence Level
+    </label>
+    <div class="flex items-center gap-3 mt-1">
+        <input id="cvar_alpha" type="range" name="cvar_alpha"
+               min="90" max="99" value="95" step="1"
+               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-navy"
+               oninput="document.getElementById('cvar_alpha_out').value = this.value + '%'"
+               aria-label="CVaR confidence level">
+        <output id="cvar_alpha_out" class="text-sm font-mono text-navy w-12 text-right" for="cvar_alpha">95%</output>
+    </div>
+</div>
+
+{% elif method == "Mean-CVaR Trade-off" %}
+<!-- Risk Aversion -->
+<div>
+    <label for="risk_aversion" class="block text-sm font-medium text-gray-700">
+        Risk Aversion (&lambda;)
+    </label>
+    <div class="flex items-center gap-3 mt-1">
+        <input id="risk_aversion" type="range" name="risk_aversion"
+               min="0.1" max="5.0" value="1.0" step="0.1"
+               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-navy"
+               oninput="document.getElementById('risk_aversion_out').value = parseFloat(this.value).toFixed(1)"
+               aria-label="Risk aversion parameter">
+        <output id="risk_aversion_out" class="text-sm font-mono text-navy w-12 text-right" for="risk_aversion">1.0</output>
+    </div>
+    <p class="text-xs text-gray-400 mt-1">Higher values penalise tail risk more.</p>
+</div>
+<!-- CVaR Confidence Level -->
+<div>
+    <label for="cvar_alpha" class="block text-sm font-medium text-gray-700">
+        CVaR Confidence Level
+    </label>
+    <div class="flex items-center gap-3 mt-1">
+        <input id="cvar_alpha" type="range" name="cvar_alpha"
+               min="90" max="99" value="95" step="1"
+               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-navy"
+               oninput="document.getElementById('cvar_alpha_out').value = this.value + '%'"
+               aria-label="CVaR confidence level">
+        <output id="cvar_alpha_out" class="text-sm font-mono text-navy w-12 text-right" for="cvar_alpha">95%</output>
+    </div>
+</div>
+
+{% elif method == "Maximum Return (Constrained)" %}
+<!-- Constraint Type -->
+<fieldset class="space-y-2">
+    <legend class="text-sm font-medium text-gray-700">Constraint Type</legend>
+    <div class="flex gap-4">
+        <label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+            <input type="radio" name="constraint_type" value="volatility" checked
+                   class="accent-navy"
+                   onchange="document.getElementById('vol-constraint').classList.remove('hidden'); document.getElementById('cvar-constraint').classList.add('hidden');">
+            Volatility
+        </label>
+        <label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+            <input type="radio" name="constraint_type" value="cvar"
+                   class="accent-navy"
+                   onchange="document.getElementById('cvar-constraint').classList.remove('hidden'); document.getElementById('vol-constraint').classList.add('hidden');">
+            CVaR
+        </label>
+    </div>
+</fieldset>
+
+<!-- Max Volatility (shown by default) -->
+<div id="vol-constraint">
+    <label for="max_volatility" class="block text-sm font-medium text-gray-700">
+        Max Volatility (%)
+    </label>
+    <div class="flex items-center gap-3 mt-1">
+        <input id="max_volatility" type="range" name="max_volatility"
+               min="5" max="30" value="15" step="0.5"
+               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-navy"
+               oninput="document.getElementById('max_volatility_out').value = parseFloat(this.value).toFixed(1) + '%'"
+               aria-label="Maximum volatility constraint">
+        <output id="max_volatility_out" class="text-sm font-mono text-navy w-14 text-right" for="max_volatility">15.0%</output>
+    </div>
+</div>
+
+<!-- Max CVaR (hidden by default) -->
+<div id="cvar-constraint" class="hidden">
+    <label for="max_cvar" class="block text-sm font-medium text-gray-700">
+        Max CVaR (%)
+    </label>
+    <div class="flex items-center gap-3 mt-1">
+        <input id="max_cvar" type="range" name="max_cvar"
+               min="10" max="50" value="25" step="1"
+               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-navy"
+               oninput="document.getElementById('max_cvar_out').value = this.value + '%'"
+               aria-label="Maximum CVaR constraint">
+        <output id="max_cvar_out" class="text-sm font-mono text-navy w-14 text-right" for="max_cvar">25%</output>
+    </div>
+</div>
+
+<!-- CVaR Confidence Level (for CVaR constraint) -->
+<div>
+    <label for="cvar_alpha" class="block text-sm font-medium text-gray-700">
+        CVaR Confidence Level
+    </label>
+    <div class="flex items-center gap-3 mt-1">
+        <input id="cvar_alpha" type="range" name="cvar_alpha"
+               min="90" max="99" value="95" step="1"
+               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-navy"
+               oninput="document.getElementById('cvar_alpha_out').value = this.value + '%'"
+               aria-label="CVaR confidence level">
+        <output id="cvar_alpha_out" class="text-sm font-mono text-navy w-12 text-right" for="cvar_alpha">95%</output>
+    </div>
+</div>
+
+{% elif method == "Exponential Utility (CARA)" %}
+<!-- Exponential Risk Aversion -->
+<div>
+    <label for="exp_risk_aversion" class="block text-sm font-medium text-gray-700">
+        Risk Aversion (C)
+    </label>
+    <div class="flex items-center gap-3 mt-1">
+        <input id="exp_risk_aversion" type="range" name="exp_risk_aversion"
+               min="0.01" max="1.0" value="0.5" step="0.01"
+               class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-navy"
+               oninput="document.getElementById('exp_risk_aversion_out').value = parseFloat(this.value).toFixed(2)"
+               aria-label="CARA risk aversion coefficient">
+        <output id="exp_risk_aversion_out" class="text-sm font-mono text-navy w-12 text-right" for="exp_risk_aversion">0.50</output>
+    </div>
+    <p class="text-xs text-gray-400 mt-1">Elton &amp; Gruber CARA utility: \(U = -e^{-C \cdot 50 \cdot R}\)</p>
+</div>
+
+{% endif %}
+
+{# ── No extra parameters for Maximum Sharpe or Minimum Variance ── #}
+{% if method == "Maximum Sharpe Ratio" or method == "Minimum Variance" %}
+<p class="text-xs text-gray-400 italic">No additional parameters required for this method.</p>
+{% endif %}
+
+<!-- ─── About This Method ─── -->
+<details class="mt-3 bg-navy-50 rounded-lg border border-gray-200">
+    <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-navy hover:text-navy-light select-none">
+        About this method
+    </summary>
+    <div class="px-3 pb-3 pt-1 text-sm text-gray-600 space-y-2">
+        {% if method == "Maximum Sharpe Ratio" %}
+        <p class="font-semibold text-navy">Goal: Find the portfolio with the highest risk-adjusted return.</p>
+        <p>Maximises the ratio of excess return (above risk-free rate) to volatility.</p>
+        <p class="bg-white rounded p-2 text-center border">\( SR = \frac{E[R_p] - R_f}{\sigma_p} \)</p>
+        <p class="text-xs text-gray-500"><strong>Best for:</strong> Investors seeking the most efficient risk-return trade-off.</p>
+
+        {% elif method == "Minimum Variance" %}
+        <p class="font-semibold text-navy">Goal: Find the portfolio with the lowest possible volatility.</p>
+        <p>Minimises portfolio standard deviation through diversification.</p>
+        <p class="bg-white rounded p-2 text-center border">\( \min \sqrt{w^T \Sigma w} \)</p>
+        <p class="text-xs text-gray-500"><strong>Best for:</strong> Conservative investors prioritizing stability.</p>
+
+        {% elif method == "Minimum CVaR" %}
+        <p class="font-semibold text-navy">Goal: Minimize expected losses in worst-case scenarios.</p>
+        <p>Minimises Conditional Value at Risk using Rockafellar-Uryasev LP formulation.</p>
+        <p class="bg-white rounded p-2 text-center border">\( \min\; CVaR_\alpha = E[L \mid L > VaR_\alpha] \)</p>
+        <p class="text-xs text-gray-500"><strong>Best for:</strong> Risk-averse investors focused on tail risk.</p>
+
+        {% elif method == "Mean-CVaR Trade-off" %}
+        <p class="font-semibold text-navy">Goal: Balance expected return against tail risk.</p>
+        <p>Optimises weighted combination: min(&minus;E[R] + &lambda;&middot;CVaR).</p>
+        <p class="bg-white rounded p-2 text-center border">\( \min \; -E[R] + \lambda \cdot CVaR_\alpha \)</p>
+        <p class="text-xs text-gray-500"><strong>Best for:</strong> Investors who want explicit control over risk-return preferences.</p>
+
+        {% elif method == "Maximum Return (Constrained)" %}
+        <p class="font-semibold text-navy">Goal: Maximize expected return within a risk budget.</p>
+        <p>Finds highest-return portfolio subject to volatility or CVaR constraint.</p>
+        <p class="bg-white rounded p-2 text-center border">\( \max E[R] \;\; \text{s.t.} \;\; \sigma \leq \sigma_{max} \)</p>
+        <p class="text-xs text-gray-500"><strong>Best for:</strong> Portfolio managers with regulatory or mandate-driven risk limits.</p>
+
+        {% elif method == "Exponential Utility (CARA)" %}
+        <p class="font-semibold text-navy">Goal: Optimize using theoretically grounded risk-aversion model.</p>
+        <p>Maximises expected CARA utility. Based on Elton &amp; Gruber Chapter 10.</p>
+        <p class="bg-white rounded p-2 text-center border">\( \max E[U] = E[-e^{-C \cdot 50 \cdot R}] \)</p>
+        <p class="text-xs text-gray-500"><strong>Best for:</strong> Quantitative investors with well-defined risk preferences.</p>
+
+        {% endif %}
+    </div>
+</details>
+
+</div>

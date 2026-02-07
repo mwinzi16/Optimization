@@ -1,0 +1,20 @@
+{% set type_map = {'success': 'green', 'error': 'red', 'warning': 'yellow', 'info': 'blue'} %}
+{% set toast_color = type_map.get(level, 'yellow') %}
+<div id="toast-container" hx-swap-oob="innerHTML">
+    <div class="bg-{{ toast_color }}-50 border border-{{ toast_color }}-200 text-{{ toast_color }}-800 px-4 py-3 rounded-lg shadow-lg max-w-sm animate-fade-in"
+         role="alert">
+        <div class="flex items-center gap-2">
+            {% if level == 'success' %}
+            <span aria-hidden="true">&#9989;</span>
+            {% elif level == 'error' %}
+            <span aria-hidden="true">&#10060;</span>
+            {% elif level == 'info' %}
+            <span aria-hidden="true">&#8505;&#65039;</span>
+            {% else %}
+            <span aria-hidden="true">&#9888;&#65039;</span>
+            {% endif %}
+            <p class="text-sm font-medium">{{ message }}</p>
+        </div>
+    </div>
+    <script>setTimeout(function(){ var el = document.querySelector('#toast-container > div'); if (el) el.remove(); }, 5000);</script>
+</div>

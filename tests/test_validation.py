@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from backend.utils.validation import (
+from app.schemas.optimization import (
     ValidatedOptimizationRequest,
     sanitize_column_names,
     validate_file_extension,

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Cat Bond Portfolio Optimizer{% endblock %}</title>
+    <!-- Tailwind CSS (CDN Play for development, compile in production) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        navy: {
+                            DEFAULT: '#1e3a5f',
+                            light: '#2d5a87',
+                            lighter: '#3d6a97',
+                            50: '#f0f4f8'
+                        }
+                    },
+                    keyframes: {
+                        'fade-in': {
+                            '0%': { opacity: '0', transform: 'translateY(-8px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' }
+                        },
+                        'fade-out': {
+                            '0%': { opacity: '1', transform: 'translateY(0)' },
+                            '100%': { opacity: '0', transform: 'translateY(-8px)' }
+                        }
+                    },
+                    animation: {
+                        'fade-in': 'fade-in 0.3s ease-out',
+                        'fade-out': 'fade-out 0.3s ease-in forwards'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+    <!-- Plotly.js -->
+    <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
+    <!-- KaTeX -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+            onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '\\(', right: '\\)', display: false}]});"></script>
+    <link rel="stylesheet" href="{{ url_for('web.static', filename='css/app.css') }}">
+</head>
+<body class="bg-gray-50 min-h-screen flex" hx-indicator="#global-spinner">
+    <!-- Sidebar -->
+    <aside id="sidebar" class="w-80 bg-white border-r border-gray-200 fixed h-full overflow-y-auto shadow-sm z-40" role="navigation" aria-label="Sidebar navigation">
+        {% block sidebar %}{% endblock %}
+    </aside>
+
+    <!-- Main Content -->
+    <main class="ml-80 flex-1 p-6 min-h-screen" role="main">
+        <!-- Toast notification container -->
+        <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2" aria-live="polite" aria-atomic="true"></div>
+
+        <!-- Global HTMX loading indicator -->
+        <div id="global-spinner" class="htmx-indicator fixed inset-0 bg-black/20 z-50 flex items-center justify-center" role="status" aria-label="Loading">
+            <div class="bg-white rounded-xl p-6 shadow-xl flex items-center gap-3">
+                <div class="animate-spin h-6 w-6 border-[3px] border-navy rounded-full border-t-transparent"></div>
+                <span class="text-navy font-medium">Processing&hellip;</span>
+            </div>
+        </div>
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <script src="{{ url_for('web.static', filename='js/app.js') }}"></script>
+    <script>
+        /* ---- HTMX global error handling ---- */
+        document.body.addEventListener('htmx:responseError', function(evt) {
+            var container = document.getElementById('toast-container');
+            if (container) {
+                container.innerHTML =
+                    '<div class="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg shadow-lg max-w-sm animate-fade-in" role="alert">' +
+                    '<div class="flex items-center gap-2">' +
+                    '<span aria-hidden="true">&#10060;</span>' +
+                    '<p class="text-sm font-medium">Request failed. Please try again.</p>' +
+                    '</div></div>';
+                setTimeout(function(){ container.innerHTML = ''; }, 5000);
+            }
+        });
+
+        /* Re-render KaTeX after HTMX swaps */
+        document.body.addEventListener('htmx:afterSwap', function() {
+            if (typeof renderMathInElement === 'function') {
+                renderMathInElement(document.body, {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '\\(', right: '\\)', display: false}
+                    ]
+                });
+            }
+        });
+    </script>
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

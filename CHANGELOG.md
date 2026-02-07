@@ -17,6 +17,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.0] - 2026-02-14
+
+### Changed — BREAKING
+- **Migrated from FastAPI to Flask** — complete rewrite of backend using Flask application factory pattern with Blueprints
+- **Unified Web UI** — replaced React SPA and Streamlit app with Flask/Jinja2 templates + HTMX + Tailwind CSS + Plotly.js
+- **Single deployment target** — consolidated 3 Docker services (backend, frontend, streamlit) into one Flask service on port 5000
+- **WSGI server** — switched from uvicorn (ASGI) to gunicorn (WSGI)
+
+### Added
+- Flask application factory (`create_app()`) with dependency injection via `Settings` dataclass
+- API v1 Blueprint (`/api/v1/`) preserving all 7 REST endpoints with identical contracts
+- Web Blueprint (`/`) with server-rendered HTMX-driven UI
+- CSRF protection via Flask-WTF (forms) with API blueprint exemption
+- Security headers via Flask-Talisman
+- Rate limiting via Flask-Limiter (replaces custom Starlette middleware)
+- 6 Plotly chart generators (histogram, donut, frontier, CVaR frontier, heatmap, CDF)
+- HTMX-powered partial rendering for method parameters, optimization results, data status, toasts
+- KaTeX math formula rendering for optimization method documentation
+- `run.py` entry point for both direct and gunicorn execution
+- Comprehensive pytest test suite (192+ tests) with pytest-flask integration
+- `conftest.py` with session-scoped fixtures for Flask app, test client, and synthetic data
+
+### Removed
+- FastAPI dependency and all async/ASGI code
+- React frontend (TypeScript, Vite, Recharts, npm ecosystem)
+- Streamlit standalone app
+- uvicorn ASGI server
+- `requirements-streamlit.txt` (no longer needed, kept as deprecated)
+
+### Migration Notes
+- API contracts unchanged — all 7 endpoints return identical JSON envelopes
+- Port changed from 8000 to 5000
+- Docker Compose reduced from 3 services to 1
+- Frontend now server-rendered (no separate build step)
+
+---
+
 ## [2.1.0] - 2026-02-07
 
 ### Fixed — CRITICAL
@@ -148,6 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 3.0.0 | 2026-02-14 | Flask migration, unified UI (HTMX + Plotly), single Docker service |
 | 2.1.0 | 2026-02-07 | Critical fixes, Docker deployment, React frontend, dev tooling |
 | 2.0.0 | 2026-01-27 | Enterprise features: A11Y, exports, docs, code quality |
 | 1.0.0 | 2026-01-15 | Initial release with 6 optimization methods |
@@ -155,6 +193,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 ## Migration Guides
+
+### Upgrading from 2.x to 3.x
+
+**Breaking Changes:**
+- Backend fully rewritten from FastAPI to Flask
+- React frontend and Streamlit app removed; replaced by server-rendered Jinja2 + HTMX
+- Default port changed from 8000 to 5000
+- Docker Compose reduced from 3 services to 1
+- uvicorn replaced by gunicorn
+
+**Migration Steps:**
+1. Delete `backend/`, `frontend/`, `app.py`, `Dockerfile.streamlit` directories/files
+2. The `app/` package is the new Flask application
+3. Use `python run.py` (dev) or `gunicorn run:app` (prod) instead of `uvicorn`
+4. Update any API client base URLs from port 8000 to 5000
+5. API contracts are unchanged — all 7 endpoints at `/api/v1/` return identical JSON
+
+**Configuration:**
+- Set `SECRET_KEY` environment variable (required in production)
+- `BIND_PORT` replaces `API_PORT` (default 5000)
+- `VITE_API_BASE` is no longer needed
+
+---
 
 ### Upgrading from 1.x to 2.x
 

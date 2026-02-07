@@ -1,0 +1,23 @@
+<div id="data-status" class="text-sm mt-3">
+    {% if data_loaded %}
+    <div class="bg-green-50 text-green-700 p-3 rounded-lg border border-green-200">
+        <p class="font-medium">&#9989; Data loaded</p>
+        <p class="mt-1">{{ "{:,}".format(n_scenarios) }} scenarios &times; {{ n_assets }} assets</p>
+        {% if asset_names %}
+        <details class="mt-2">
+            <summary class="cursor-pointer text-xs text-green-600 hover:text-green-800">Show assets</summary>
+            <ul class="mt-1 text-xs text-green-600 space-y-0.5 max-h-32 overflow-y-auto">
+                {% for name in asset_names %}
+                <li>{{ name }}</li>
+                {% endfor %}
+            </ul>
+        </details>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="bg-yellow-50 text-yellow-700 p-3 rounded-lg border border-yellow-200">
+        <p class="font-medium">&#9888;&#65039; No data loaded</p>
+        <p class="mt-1">Upload a CSV file or check data path.</p>
+    </div>
+    {% endif %}
+</div>

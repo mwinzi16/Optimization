@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Cat Bond Portfolio Optimizer{% endblock %}
+
+{% block sidebar %}
+<div class="flex flex-col h-full">
+    <!-- App logo / title -->
+    <div class="bg-gradient-to-br from-navy to-navy-light p-5">
+        <h1 class="text-white text-lg font-bold tracking-tight">Cat Bond Portfolio Optimizer</h1>
+        <p class="text-blue-200 text-xs mt-1">Scenario-Based Optimization Engine</p>
+    </div>
+
+    <div class="flex-1 overflow-y-auto p-4 space-y-5">
+        <!-- ─── Data Source ─── -->
+        <section aria-label="Data source">
+            <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Data Source</h2>
+
+            <form hx-post="{{ url_for('web.upload') }}"
+                  hx-target="#data-status"
+                  hx-swap="outerHTML"
+                  hx-encoding="multipart/form-data"
+                  class="space-y-2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <label for="file-upload" class="block text-sm font-medium text-gray-700">Upload CSV / Excel</label>
+                <input id="file-upload"
+                       type="file"
+                       name="file"
+                       accept=".csv,.xlsx,.xls"
+                       class="block w-full text-sm text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-navy-50 file:text-navy hover:file:bg-blue-100 cursor-pointer"
+                       aria-describedby="file-help">
+                <p id="file-help" class="text-xs text-gray-400">CSV or Excel with scenarios as rows, assets as columns.</p>
+                <button type="submit"
+                        class="w-full bg-navy text-white text-sm font-medium py-2 px-4 rounded-lg hover:bg-navy-light transition focus:outline-none focus:ring-2 focus:ring-navy/50">
+                    Upload File
+                </button>
+            </form>
+
+            <!-- Reset to sample data -->
+            <button hx-post="{{ url_for('web.reset') }}"
+                    hx-target="#data-status"
+                    hx-swap="outerHTML"
+                    hx-headers='{"X-CSRFToken": "{{ csrf_token() }}"}'
+                    class="w-full mt-2 text-sm text-navy-light hover:text-navy underline underline-offset-2 transition">
+                Reset to sample data
+            </button>
+
+            <!-- Data status display -->
+            {% include "partials/data_status.html" %}
+        </section>
+
+        <hr class="border-gray-200">
+
+        <!-- ─── Optimization Settings ─── -->
+        <section aria-label="Optimization settings">
+            <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Optimization Settings</h2>
+
+            <form id="optimize-form"
+                  hx-post="{{ url_for('web.optimize') }}"
+                  hx-target="#results-area"
+                  hx-swap="innerHTML"
+                  class="space-y-4">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <!-- Risk-free rate -->
+                <div>
+                    <label for="risk_free_rate" class="block text-sm font-medium text-gray-700">Risk-Free Rate (%)</label>
+                    <input id="risk_free_rate"
+                           type="number"
+                           name="risk_free_rate"
+                           value="4.0"
+                           min="0" max="20" step="0.1"
+                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm focus:border-navy focus:ring-navy px-3 py-2 border"
+                           aria-label="Risk-free rate percentage">
+                </div>
+
+                <!-- Method select -->
+                <div>
+                    <label for="method" class="block text-sm font-medium text-gray-700">Optimization Method</label>
+                    <select id="method"
+                            name="method"
+                            hx-get="{{ url_for('web.method_params', method='PLACEHOLDER') }}"
+                            hx-trigger="change"
+                            hx-target="#method-params"
+                            hx-swap="innerHTML"
+                            hx-vals="js:{}"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm focus:border-navy focus:ring-navy px-3 py-2 border"
+                            aria-label="Select optimization method">
+                        {% for m in methods %}
+                        <option value="{{ m }}"{% if loop.first %} selected{% endif %}>{{ m }}</option>
+                        {% endfor %}
+                    </select>
+                    <script>
+                        /* Rewrite hx-get URL on change to include the selected method */
+                        (function() {
+                            var sel = document.getElementById('method');
+                            function updateUrl() {
+                                sel.setAttribute('hx-get', '/method-params/' + encodeURIComponent(sel.value));
+                                htmx.process(sel);
+                            }
+                            sel.addEventListener('change', updateUrl);
+                            /* Trigger initial load of method params */
+                            updateUrl();
+                            htmx.trigger(sel, 'change');
+                        })();
+                    </script>
+                </div>
+
+                <!-- Method-specific parameters (swapped by HTMX) -->
+                <div id="method-params" aria-live="polite">
+                    <!-- Loaded dynamically via HTMX -->
+                </div>
+
+                <!-- Weight constraints -->
+                <fieldset class="space-y-3">
+                    <legend class="text-sm font-medium text-gray-700">Weight Constraints</legend>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label for="min_weight" class="block text-xs text-gray-500">Min Weight (%)</label>
+                            <input id="min_weight"
+                                   type="number"
+                                   name="min_weight"
+                                   value="0"
+                                   min="0" max="100" step="0.5"
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm focus:border-navy focus:ring-navy px-3 py-2 border">
+                        </div>
+                        <div>
+                            <label for="max_weight" class="block text-xs text-gray-500">Max Weight (%)</label>
+                            <input id="max_weight"
+                                   type="number"
+                                   name="max_weight"
+                                   value="100"
+                                   min="0" max="100" step="0.5"
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm focus:border-navy focus:ring-navy px-3 py-2 border">
+                        </div>
+                    </div>
+                </fieldset>
+
+                <!-- Run button -->
+                <button type="submit"
+                        class="w-full bg-gradient-to-r from-navy to-navy-light text-white font-semibold py-3 px-4 rounded-lg hover:from-navy-light hover:to-navy-lighter transition-all shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-navy/50">
+                    &#9654; Run Optimization
+                </button>
+            </form>
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Gradient header banner -->
+<div class="bg-gradient-to-r from-navy via-navy-light to-navy-lighter rounded-xl p-6 mb-6 shadow-md">
+    <h1 class="text-2xl font-bold text-white">Portfolio Optimization Dashboard</h1>
+    <p class="text-blue-200 mt-1 text-sm">Catastrophe Bond &amp; ILS Portfolio Optimization using Scenario-Based Models</p>
+</div>
+
+<!-- Results area (swapped by HTMX after optimization) -->
+<div id="results-area">
+    <div class="flex flex-col items-center justify-center min-h-[50vh] text-center">
+        <div class="bg-white rounded-xl p-10 shadow-sm border border-gray-100 max-w-lg">
+            <svg class="mx-auto h-16 w-16 text-gray-300 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                      d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+            </svg>
+            <h2 class="text-lg font-semibold text-gray-600 mb-2">No Results Yet</h2>
+            <p class="text-gray-400 text-sm">Configure your optimization parameters in the sidebar and click <strong>Run Optimization</strong> to see results here.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

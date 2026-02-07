@@ -1,37 +1,20 @@
-version: "3.9"
-
 services:
-  backend:
+  app:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "5000:5000"
     environment:
       - LOG_LEVEL=INFO
+      - SECRET_KEY=${SECRET_KEY:-change-me}
+      - ALLOW_ANONYMOUS=${ALLOW_ANONYMOUS:-true}
+      - BIND_HOST=0.0.0.0
+      - BIND_PORT=5000
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/v1/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    ports:
-      - "3000:80"
-    depends_on:
-      backend:
-        condition: service_healthy
-    restart: unless-stopped
-
-  streamlit:
-    build:
-      context: .
-      dockerfile: Dockerfile.streamlit
-    ports:
-      - "8501:8501"
-    restart: unless-stopped
